@@ -7,12 +7,15 @@ function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1280,
         height: 800,
+        minHeight: 600,
+        minWidth: 800,
         icon: path.join(__dirname, 'deepseek-logo.png'),
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
             preload: path.join(__dirname, 'preload.js'),
         },
+        autoHideMenuBar: true,
     });
 
     mainWindow.loadURL('https://chat.deepseek.com/');
@@ -28,9 +31,9 @@ function createMainWindow() {
 app.on('ready', createMainWindow);
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
 });
 
 app.on('activate', () => {
