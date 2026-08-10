@@ -10,19 +10,19 @@
   "keywords": [],
   "author": "doxdk",
   "license": "ISC",
-  "description": "A desktop version of DeepSeek, an AI-powered application that provides intelligent assistance and interaction. This application allows users to access DeepSeek's chat interface directly from their desktop, with support for local storage and cookies.",
+  "description": "DeepSeek 官方网页版桌面客户端(悬浮球 + 右键截图提问 + 对话小浮框)",
   "devDependencies": {
-    "electron": "^34.0.1",
-    "electron-builder": "^24.6.3"
+    "electron": "^43.3.0",
+    "electron-builder": "^26.15.3"
   },
   "repository": {
     "type": "git",
     "url": "https://github.com/doxdk/deepseek-desktop"
   },
   "build": {
-    "appId": "com.doxdk.deepseek",
-    "productName": "DeepSeek",
-    "copyright": "Copyright © 2025 doxdk",
+    "appId": "com.deepseek.desktop",
+    "productName": "DeepSeek Desktop",
+    "copyright": "Copyright © 2026",
     "directories": {
       "output": "dist"
     },
@@ -30,19 +30,21 @@
       "main.js",
       "index.html",
       "preload.js",
-      "deepseek-logo.png"
+      "inject.js",
+      "popup-inject.js",
+      "ui/**/*"
     ],
     "win": {
       "target": "nsis",
-      "icon": "deepseek-logo.png"
+      "icon": "ui/logo.svg"
     },
     "mac": {
       "target": "dmg",
-      "icon": "deepseek-logo.png"
+      "icon": "ui/logo.svg"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "deepseek-logo.png"
+      "icon": "ui/logo.svg"
     }
   }
 }

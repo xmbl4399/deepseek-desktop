@@ -22,22 +22,9 @@ contextBridge.exposeInMainWorld('electron', {
       if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
     }
     return null;
-  }
-});
-
-window.addEventListener('beforeunload', () => {
-    const state = {
-        url: window.location.href,
-        scrollPosition: window.scrollY,
-    };
-    localStorage.setItem('appState', JSON.stringify(state));
-});
-
-window.addEventListener('load', () => {
-    localStorage.clear();
-    const savedState = JSON.parse(localStorage.getItem('appState'));
-    if (savedState) {
-        window.location.href = savedState.url;
-        window.scrollTo(0, savedState.scrollPosition);
-    }
+  },
+  // 对话浮框:隐藏(由浮框顶部 ✕ 调用)
+  hidePopup: () => {
+    ipcRenderer.send('ui:action', 'popup-hide');
+  },
 });
