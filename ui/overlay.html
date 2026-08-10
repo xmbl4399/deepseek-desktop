@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="ui.css">
+</head>
+<body class="overlay-body">
+  <div id="shot"><img id="shot-img" alt="" draggable="false"></div>
+  <!-- 选区外的四块暗色遮罩 -->
+  <div id="mask-t"></div>
+  <div id="mask-l"></div>
+  <div id="mask-r"></div>
+  <div id="mask-b"></div>
+  <!-- 选区框 -->
+  <div id="sel" class="hidden"></div>
+  <div id="tip">拖拽框选截图区域 · Enter 发送 · Esc 取消</div>
+  <div id="toolbar" class="hidden">
+    <span id="size-info"></span>
+    <button id="btn-ok">✔ 发送提问</button>
+    <button id="btn-cancel">✘ 取消</button>
+  </div>
+  <script src="overlay.js"></script>
+</body>
+</html>

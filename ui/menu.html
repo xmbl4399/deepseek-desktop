@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  body { background: transparent; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; }
+  .menu {
+    background: rgba(24, 26, 38, 0.96);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 6px;
+  }
+  .mi {
+    padding: 9px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #e8eaf6;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .mi:hover { background: rgba(77, 107, 254, 0.35); color: #fff; }
+  .mi.danger { color: #ff8a8a; }
+  .mi.danger:hover { background: rgba(255, 80, 80, 0.22); color: #ffb0b0; }
+  .sep { height: 1px; margin: 6px 8px; background: rgba(255, 255, 255, 0.1); }
+</style>
+</head>
+<body>
+  <div class="menu">
+    <div class="mi" data-act="main">显示主窗口</div>
+    <div class="mi" data-act="screenshot">截图提问</div>
+    <div class="mi" data-act="popup">对话小浮框</div>
+    <div class="mi" data-act="toggle-ball">显示/隐藏悬浮球</div>
+    <div class="sep"></div>
+    <div class="mi danger" data-act="quit">退出</div>
+  </div>
+  <script src="menu.js"></script>
+</body>
+</html>
