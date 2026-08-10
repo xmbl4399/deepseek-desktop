@@ -24,7 +24,7 @@
     "productName": "DeepSeek Desktop",
     "copyright": "Copyright © 2026",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
       "main.js",
@@ -36,15 +36,20 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "ui/logo.svg"
+      "icon": "ui/logo.png"
+    },
+    "nsis": {
+      "shortcutName": "DeepSeek",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "mac": {
       "target": "dmg",
-      "icon": "ui/logo.svg"
+      "icon": "ui/logo.png"
     },
     "linux": {
       "target": "AppImage",
-      "icon": "ui/logo.svg"
+      "icon": "ui/logo.png"
     }
   }
 }
