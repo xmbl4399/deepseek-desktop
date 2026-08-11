@@ -551,7 +551,7 @@ app.whenReady().then(() => {
       } catch (e) { /* ignore */ }
     });
   }
-  setInterval(runFsCheck, 4000); // 4秒检测一次,降低开销
+  setInterval(runFsCheck, 2000);
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束
