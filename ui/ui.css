@@ -24,15 +24,6 @@ body {
   justify-content: center;
 }
 
-.ball-body {
-  width: 100vw;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
 #ball {
   width: 46px;
   height: 46px;
@@ -42,8 +33,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: grab;
   flex-shrink: 0;
+}
+
+#ball:active {
+  cursor: grabbing;
 }
 
 #ball img {
@@ -51,24 +46,6 @@ body {
   height: 40px;
   border-radius: 50%;
   pointer-events: none;
-}
-
-/* 托盘:球下方椭圆白色把手,系统原生拖拽 */
-#tray-handle {
-  width: 32px;
-  height: 18px;
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  cursor: grab;
-  flex-shrink: 0;
-  -webkit-app-region: drag;
-  transition: background 0.2s, box-shadow 0.2s;
-}
-
-#tray-handle:hover {
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
 /* ---------- 右键菜单(已改为主进程原生菜单,样式保留备用) ---------- */

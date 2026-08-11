@@ -1,13 +1,12 @@
-// 悬浮球逻辑:
-//   球体(#ball):单击/双击/右键(JS 事件)
-//   托盘(#tray-handle):拖拽(系统原生 -webkit-app-region:drag,不膨胀)
-//   右键菜单由主进程 webContents.on('context-menu') 拦截
+// 悬浮球:JS 拖拽(window.moveTo 渲染进程直控,不经过主进程 setPosition,避免膨胀)
+// 单击弹浮框 / 双击主窗 / 右键菜单
 const api = window.ds;
 const ball = document.querySelector('#ball');
-const tray = document.querySelector('#tray-handle');
 
 let clickTimer = null;
 let moved = false;
+let dragging = false;
+let dragSX = 0, dragSY = 0, dragWX = 0, dragWY = 0;
 
 function dbg(...args) {
   try { api.log(...args); } catch (e) {}
@@ -15,22 +14,42 @@ function dbg(...args) {
 
 dbg('ball init', { innerW: window.innerWidth, innerH: window.innerHeight, screenX: window.screenX, screenY: window.screenY });
 
-// 托盘拖拽:系统原生处理(-webkit-app-region:drag),不膨胀
-// 监听窗口位置变化判断是否拖拽了
-let lastWinX = window.screenX;
-let lastWinY = window.screenY;
-setInterval(() => {
-  if (window.screenX !== lastWinX || window.screenY !== lastWinY) {
-    moved = true;
-    lastWinX = window.screenX;
-    lastWinY = window.screenY;
+// ---------- 拖拽:渲染进程 window.moveTo + resizeTo,不触发主进程膨胀 ----------
+ball.addEventListener('mousedown', (e) => {
+  dbg('mousedown', { button: e.button, sx: e.screenX, sy: e.screenY });
+  if (e.button !== 0) return;
+  dragging = true;
+  moved = false;
+  dragSX = e.screenX;
+  dragSY = e.screenY;
+  dragWX = window.screenX;
+  dragWY = window.screenY;
+});
+
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  // 过滤幽灵事件:窗口移动触发的假 mousemove, movement 为 0
+  if (e.movementX === 0 && e.movementY === 0) return;
+  const dx = e.screenX - dragSX;
+  const dy = e.screenY - dragSY;
+  if (Math.abs(dx) > 1 || Math.abs(dy) > 1) moved = true;
+  window.moveTo(dragWX + dx, dragWY + dy);
+  window.resizeTo(46, 46);
+});
+
+window.addEventListener('mouseup', () => {
+  if (dragging) {
+    dbg('mouseup', { moved, screenX: window.screenX, screenY: window.screenY });
+    dragging = false;
+    // 松手后通知主进程做钳制(只调一次 setPosition,膨胀可控)
+    api.action('drag-end', { x: window.screenX, y: window.screenY });
   }
-}, 100);
+});
 
 // ---------- 球体事件 ----------
-
 // 单击 → 打开/关闭对话浮框(toggle)
 ball.addEventListener('click', (e) => {
+  dbg('click', { moved });
   if (moved) { moved = false; return; }
   if (clickTimer) clearTimeout(clickTimer);
   clickTimer = setTimeout(() => api.action('popup'), 240);
@@ -38,15 +57,16 @@ ball.addEventListener('click', (e) => {
 
 // 双击 → 切换主窗
 ball.addEventListener('dblclick', () => {
+  dbg('dblclick');
   if (clickTimer) clearTimeout(clickTimer);
   clickTimer = null;
   api.action('toggle-main');
 });
 
-// 右键 → 自绘菜单(fallback,主进程 context-menu 也会拦截)
+// 右键 → 自绘菜单
 ball.addEventListener('contextmenu', (e) => {
+  dbg('contextmenu', { sx: e.screenX, sy: e.screenY });
   e.preventDefault();
-  e.stopPropagation();
   if (clickTimer) clearTimeout(clickTimer);
   api.action('ball-menu', { wx: window.screenX, wy: window.screenY, mx: e.screenX, my: e.screenY });
 });

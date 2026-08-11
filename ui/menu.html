@@ -4,17 +4,18 @@
 <meta charset="UTF-8">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-  body { background: transparent; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; }
+  body { background: transparent; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; display: inline-block; }
   .menu {
     background: rgba(24, 26, 38, 0.96);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
-    padding: 6px;
+    border-radius: 10px;
+    padding: 4px;
+    width: fit-content;
   }
   .mi {
-    padding: 9px 16px;
-    border-radius: 8px;
-    font-size: 13px;
+    padding: 7px 14px;
+    border-radius: 6px;
+    font-size: 12px;
     color: #e8eaf6;
     cursor: pointer;
     white-space: nowrap;
@@ -22,17 +23,15 @@
   .mi:hover { background: rgba(77, 107, 254, 0.35); color: #fff; }
   .mi.danger { color: #ff8a8a; }
   .mi.danger:hover { background: rgba(255, 80, 80, 0.22); color: #ffb0b0; }
-  .sep { height: 1px; margin: 6px 8px; background: rgba(255, 255, 255, 0.1); }
+  .sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.1); }
 </style>
 </head>
 <body>
   <div class="menu">
-    <div class="mi" data-act="main">显示主窗口</div>
+    <div class="mi" data-act="main">打开 DS 窗口</div>
+    <div class="mi" data-act="popup">打开对话浮窗</div>
     <div class="mi" data-act="screenshot">截图提问</div>
-    <div class="mi" data-act="popup">对话小浮框</div>
-    <div class="mi" data-act="toggle-ball">显示/隐藏悬浮球</div>
-    <div class="sep"></div>
-    <div class="mi danger" data-act="quit">退出</div>
+    <div class="mi" data-act="toggle-ball">切换悬浮球</div>
   </div>
   <script src="menu.js"></script>
 </body>

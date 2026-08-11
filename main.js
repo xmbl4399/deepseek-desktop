@@ -21,12 +21,7 @@ function log(...args) {
   const line = `[${new Date().toISOString()}] ${args
     .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
     .join(' ')}`;
-  try {
-    fs.appendFileSync(LOG_FILE, line + '\n');
-  } catch (e) {
-    /* ignore */
-  }
-  console.log(line);
+  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch (e) {}
 }
 ipcMain.on('ui:log', (_e, ...args) => log('[ui]', ...args));
 
@@ -34,11 +29,10 @@ let mainWindow = null;
 let tray = null;
 let floatingWindow = null;
 let menuWindow = null; // 悬浮球自绘右键菜单(独立小窗口)
-let lastDragLog = 0; // 拖动中节流日志时间戳
+
 
 // ---------------- 自绘右键菜单 ----------------
-const MENU_W = 160;
-const MENU_H = 210;
+
 
 function closeMenuWindow() {
   if (menuWindow && !menuWindow.isDestroyed()) menuWindow.destroy();
@@ -46,12 +40,8 @@ function closeMenuWindow() {
 }
 
 function showBallMenu(pos) {
-  // 悬浮球窗口 focusable:false,Windows 下原生 Menu.popup 无法以其为宿主弹出,
-  // 改用自绘 HTML 菜单小窗口(微信/QQ 悬浮球同款交互)。
   closeMenuWindow();
   const wa = screen.getPrimaryDisplay().workArea;
-  // 定位锚点:优先用鼠标屏幕坐标(右键时鼠标在球上,直观可靠);
-  // window.screenX 在拖拽后可能偏移(窗口尺寸与内容尺寸不一致),仅作回退。
   const GAP = 8;
   let ax = 0, ay = 0;
   if (pos && typeof pos.mx === 'number') {
@@ -62,19 +52,11 @@ function showBallMenu(pos) {
     const c = screen.getCursorScreenPoint();
     ax = c.x; ay = c.y;
   }
-  // 菜单从锚点左侧展开(向左偏移菜单宽+间距),向右下展开,不覆盖球
-  let x = ax - MENU_W - GAP;
-  let y = ay;
-  // 左侧放不下 → 翻到锚点右侧
-  if (x < wa.x) x = ax + GAP;
-  // 垂直越界修正
-  if (y + MENU_H > wa.y + wa.height) y = wa.y + wa.height - MENU_H;
-  if (y < wa.y) y = wa.y;
-  log('[ball-menu] anchor=', [ax, ay], 'ball=', [pos?.wx, pos?.wy], '-> menu at', [x, y]);
 
+  // 先创建窗口加载内容,再读取实际尺寸自适应定位
   menuWindow = new BrowserWindow({
-    width: MENU_W,
-    height: MENU_H,
+    width: 200,
+    height: 200,
     frame: false,
     transparent: true,
     resizable: false,
@@ -89,19 +71,30 @@ function showBallMenu(pos) {
     },
   });
   menuWindow.setAlwaysOnTop(true, 'pop-up-menu');
-  menuWindow.setPosition(Math.round(x), Math.round(y));
   menuWindow.loadFile(path.join(__dirname, 'ui', 'menu.html'));
-  menuWindow.focus();
-  log('[ball-menu] menuWindow created at', { x, y }, 'size', [MENU_W, MENU_H]);
-  // 点击菜单外部(窗口失焦)即关闭
-  menuWindow.on('blur', () => {
-    log('[ball-menu] menu blur -> close');
-    closeMenuWindow();
+
+  // 加载后读取内容实际尺寸,自适应窗口
+  menuWindow.webContents.once('did-finish-load', () => {
+    menuWindow.webContents.executeJavaScript('[document.body.scrollWidth, document.body.scrollHeight]')
+      .then(([mw, mh]) => {
+        if (!menuWindow || menuWindow.isDestroyed()) return;
+        // 内容尺寸 + 少量余量
+        const mw2 = Math.ceil(mw) + 2;
+        const mh2 = Math.ceil(mh) + 2;
+        // 菜单从锚点左侧展开
+        let x = ax - mw2 - GAP;
+        let y = ay;
+        if (x < wa.x) x = ax + GAP;
+        if (y + mh2 > wa.y + wa.height) y = wa.y + wa.height - mh2;
+        if (y < wa.y) y = wa.y;
+        menuWindow.setBounds({ x: Math.round(x), y: Math.round(y), width: mw2, height: mh2 });
+        menuWindow.focus();
+        log('[ball-menu] anchor=', [ax, ay], 'size=', [mw, mh], '-> menu at', [x, y]);
+      });
   });
-  menuWindow.on('closed', () => {
-    log('[ball-menu] menu closed');
-    menuWindow = null;
-  });
+
+  menuWindow.on('blur', () => closeMenuWindow());
+  menuWindow.on('closed', () => { menuWindow = null; });
 }
 
 // ---------------- 主窗口 ----------------
@@ -144,9 +137,8 @@ function showMain() {
 
 // ---------------- 悬浮球 ----------------
 const BALL_SIZE = 46;
-const TRAY_H = 23;
 const FLOAT_WIN_W = BALL_SIZE;
-const FLOAT_WIN_H = BALL_SIZE + TRAY_H; // 球+托盘总高
+const FLOAT_WIN_H = BALL_SIZE;
 
 function createFloatingWindow() {
   floatingWindow = new BrowserWindow({
@@ -167,12 +159,7 @@ function createFloatingWindow() {
     },
   });
 
-  // 拦截系统右键:系统拖拽区(-webkit-app-region:drag)右键被系统接管,
-  // 通过 webContents 的 'context-menu' 事件拦截,弹出自绘菜单
-  floatingWindow.webContents.on('context-menu', (e, params) => {
-    const pos = floatingWindow.getPosition();
-    onUiAction(null, 'ball-menu', { wx: pos[0], wy: pos[1], mx: params.x, my: params.y });
-  });
+  // 右键菜单由渲染进程 contextmenu 事件触发,此处保留兜底拦截
 
   floatingWindow.setAlwaysOnTop(true, 'screen-saver');
   floatingWindow.loadFile(path.join(__dirname, 'ui', 'floating.html'));
@@ -187,30 +174,38 @@ function createFloatingWindow() {
 // 悬浮球位置:至少留一半球体在屏幕内
 function clampBall(x, y) {
   const wa = screen.getPrimaryDisplay().workArea;
-  const halfX = Math.ceil(FLOAT_WIN_W / 2);
-  const halfY = Math.ceil(FLOAT_WIN_H / 2);
   return {
-    x: Math.round(Math.min(Math.max(x, wa.x - halfX), wa.x + wa.width - halfX)),
-    y: Math.round(Math.min(Math.max(y, wa.y - halfY), wa.y + wa.height - halfY)),
+    x: Math.round(Math.min(Math.max(x, wa.x), wa.x + wa.width - FLOAT_WIN_W)),
+    y: Math.round(Math.min(Math.max(y, wa.y), wa.y + wa.height - FLOAT_WIN_H)),
   };
 }
 
 function positionFloating() {
   if (!floatingWindow) return;
   const wa = screen.getPrimaryDisplay().workArea;
-  // 默认位置:屏幕右侧,高度 1/3 处
-  const x = wa.x + wa.width - FLOAT_WIN_W - 24;
+  const x = wa.x + wa.width - FLOAT_WIN_W;
   const y = wa.y + Math.round(wa.height / 3);
   floatingWindow.setPosition(x, y);
 }
 
-// ---------------- 统一应用菜单(托盘 + 悬浮球右键共用) ----------------
+// ---------------- 托盘菜单 ----------------
 function buildAppMenu() {
+  const autoStart = app.getLoginItemSettings().openAtLogin;
   return Menu.buildFromTemplate([
-    { label: '显示主窗口', click: showMain },
+    { label: '打开 DS 窗口', click: showMain },
+    { label: '打开对话浮窗', click: () => togglePopup() },
     { label: '截图提问', click: () => startScreenshot() },
-    { label: '对话小浮框', click: () => togglePopup() },
-    { label: '显示/隐藏悬浮球', click: toggleFloating },
+    { label: '切换悬浮球', click: toggleFloating },
+    { type: 'separator' },
+    {
+      label: '开机启动',
+      type: 'radio',
+      checked: autoStart,
+      click: (mi) => {
+        app.setLoginItemSettings({ openAtLogin: mi.checked });
+        log('[settings] autoStart=', mi.checked);
+      },
+    },
     { type: 'separator' },
     {
       label: '退出',
@@ -297,6 +292,15 @@ function onUiAction(name, payload) {
       break;
     case 'drag-end': {
       // 拖拽由系统原生处理,此 case 不再使用
+      break;
+    }
+    case 'drag-end': {
+      // 拖拽结束:渲染进程已用 window.moveTo 落位,主进程只做钳制+尺寸修正(仅调一次,膨胀可控)
+      if (floatingWindow && !floatingWindow.isDestroyed() && payload && typeof payload.x === 'number') {
+        const p = clampBall(payload.x, payload.y);
+        floatingWindow.setBounds({ x: p.x, y: p.y, width: BALL_SIZE, height: BALL_SIZE });
+        log('[drag] end pos=', [p.x, p.y], 'size=', floatingWindow.getSize());
+      }
       break;
     }
     case 'quit':
@@ -403,24 +407,6 @@ async function injectToPopup(imagePath) {
 let popupWindow = null;
 let pendingPopupText = null;
 
-// 浮框打开后,若悬浮球与浮框重叠(浮框右下角会盖住默认位置的球),把球挪到浮框上方
-function repositionBallAwayFromPopup() {
-  if (!floatingWindow || floatingWindow.isDestroyed()) return;
-  if (!popupWindow || popupWindow.isDestroyed()) return;
-  const [bx, by] = floatingWindow.getPosition();
-  const pr = popupWindow.getBounds();
-  const overlap =
-    bx < pr.x + pr.width && bx + FLOAT_WIN_W > pr.x && by < pr.y + pr.height && by + FLOAT_WIN_H > pr.y;
-  log('[popup] ball=', [bx, by], 'popup=', pr, 'overlap=', overlap);
-  if (!overlap) return;
-  const wa = screen.getDisplayNearestPoint({ x: bx + FLOAT_WIN_W / 2, y: by + FLOAT_WIN_H / 2 }).workArea;
-  let nx = Math.min(Math.max(pr.x + pr.width - FLOAT_WIN_W, wa.x), wa.x + wa.width - FLOAT_WIN_W);
-  let ny = pr.y - FLOAT_WIN_H - 8; // 优先放到浮框正上方
-  if (ny < wa.y) ny = pr.y + pr.height + 8; // 上方放不下则放到下方
-  log('[popup] move ball away', [bx, by], '->', [nx, ny]);
-  floatingWindow.setPosition(nx, ny);
-}
-
 function togglePopup(text) {
   if (popupWindow && !popupWindow.isDestroyed() && popupWindow.isVisible()) {
     popupWindow.hide();
@@ -434,10 +420,10 @@ function togglePopup(text) {
 async function getPopupReady() {
   if (!popupWindow || popupWindow.isDestroyed()) {
     popupWindow = new BrowserWindow({
-      width: 420,
-      height: 520,
-      minWidth: 360,
-      minHeight: 380,
+      width: 380,
+      height: 620,
+      minWidth: 340,
+      minHeight: 460,
       icon: path.join(__dirname, 'ui', 'logo.png'),
       frame: false,
       resizable: true,
@@ -479,8 +465,8 @@ function positionPopup() {
   const wa = screen.getPrimaryDisplay().workArea;
   const pw = popupWindow.getSize()[0];
   const ph = popupWindow.getSize()[1];
-  // 屏幕右侧 1/3 处,高度居中
-  const x = wa.x + Math.round(wa.width * 2 / 3) - Math.round(pw / 2);
+  // 屏幕右侧 1/4 处,高度居中
+  const x = wa.x + Math.round(wa.width * 3 / 4) - Math.round(pw / 2);
   const y = wa.y + Math.round((wa.height - ph) / 2);
   popupWindow.setPosition(x, y);
 }
@@ -527,7 +513,38 @@ app.whenReady().then(() => {
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));
 
+  // 启动后自动弹出对话浮窗(双击桌面图标或开机自启时显示)
+  setTimeout(() => {
+    if (!popupWindow || popupWindow.isDestroyed()) {
+      togglePopup();
+    }
+  }, 1200);
+
   app.on('activate', () => showMain());
+
+  // 全屏检测:浏览器全屏播放视频时自动隐藏悬浮球,退出全屏后恢复
+  const { execFile } = require('child_process');
+  const fsCheckScript = path.join(__dirname, 'check-fullscreen.ps1');
+  let wasFullscreen = false;
+  let ballHiddenForFs = false;
+  function checkFullscreen() {
+    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fsCheckScript], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+      if (err) return;
+      const isFs = (stdout || '').trim() === 'FULLSCREEN';
+      if (isFs && !wasFullscreen && floatingWindow && !floatingWindow.isDestroyed() && floatingWindow.isVisible()) {
+        floatingWindow.hide();
+        ballHiddenForFs = true;
+        log('[fullscreen] detected, ball hidden');
+      } else if (!isFs && wasFullscreen && ballHiddenForFs && floatingWindow && !floatingWindow.isDestroyed()) {
+        floatingWindow.show();
+        ballHiddenForFs = false;
+        log('[fullscreen] exited, ball restored');
+      }
+      wasFullscreen = isFs;
+      setTimeout(checkFullscreen, 2000);
+    });
+  }
+  setTimeout(checkFullscreen, 3000);
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束
