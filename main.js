@@ -291,15 +291,10 @@ function onUiAction(name, payload) {
       closeOverlay();
       break;
     case 'drag-end': {
-      // 拖拽由系统原生处理,此 case 不再使用
-      break;
-    }
-    case 'drag-end': {
-      // 拖拽结束:渲染进程已用 window.moveTo 落位,主进程只做钳制+尺寸修正(仅调一次,膨胀可控)
+      // 拖拽结束:渲染进程已用 window.moveTo 落位,主进程只做钳制+尺寸修正
       if (floatingWindow && !floatingWindow.isDestroyed() && payload && typeof payload.x === 'number') {
         const p = clampBall(payload.x, payload.y);
         floatingWindow.setBounds({ x: p.x, y: p.y, width: BALL_SIZE, height: BALL_SIZE });
-        log('[drag] end pos=', [p.x, p.y], 'size=', floatingWindow.getSize());
       }
       break;
     }
@@ -308,7 +303,7 @@ function onUiAction(name, payload) {
       app.quit();
       break;
     default:
-      console.warn('[ds] unknown ui action:', name);
+      log('[ds] unknown ui action:', name);
   }
 }
 
@@ -335,7 +330,7 @@ async function startScreenshot() {
     pendingShot = { dataUrl: src.thumbnail.toDataURL(), area: wa };
     createOverlay(wa);
   } catch (err) {
-    console.error('[ds] screenshot failed:', err);
+    log('[ds] screenshot failed:', err.message);
     restoreFloating();
   }
 }
@@ -375,7 +370,7 @@ function handleCrop({ dataUrl }) {
   const file = path.join(app.getPath('temp'), 'ds-screenshot.png');
   const b64 = String(dataUrl).replace(/^data:image\/png;base64,/, '');
   fs.writeFileSync(file, Buffer.from(b64, 'base64'));
-  console.log('[ds] screenshot saved:', file, fs.statSync(file).size, 'bytes');
+  log('[ds] screenshot saved:', file, fs.statSync(file).size, 'bytes');
   closeOverlay();
   injectToPopup(file); // 注入到对话浮框:图片上传预览,等待用户输入后自行发送
 }
@@ -397,9 +392,9 @@ async function injectToPopup(imagePath) {
     const result = await win.webContents.executeJavaScript(
       `${code}\n__dsInjectImage(${JSON.stringify(b64)});`
     );
-    console.log('[ds] inject result:', JSON.stringify(result));
+    log('[ds] inject result:', JSON.stringify(result));
   } catch (err) {
-    console.error('[ds] inject failed:', err);
+    log('[ds] inject failed:', err.message);
   }
 }
 
@@ -480,7 +475,7 @@ async function injectPopupUi() {
       pendingPopupText = null;
     }
   } catch (err) {
-    console.error('[ds] popup inject failed:', err);
+    log('[ds] popup inject failed:', err.message);
   }
 }
 
@@ -527,8 +522,12 @@ app.whenReady().then(() => {
   const fsCheckScript = path.join(__dirname, 'check-fullscreen.ps1');
   let wasFullscreen = false;
   let ballHiddenForFs = false;
-  function checkFullscreen() {
-    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fsCheckScript], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+  let fsCheckRunning = false; // 防止 PS 进程堆积
+  function runFsCheck() {
+    if (fsCheckRunning) return; // 上次还没完成就跳过
+    fsCheckRunning = true;
+    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fsCheckScript], { timeout: 4000, windowsHide: true }, (err, stdout) => {
+      fsCheckRunning = false;
       try {
         if (err) return;
         const isFs = (stdout || '').trim() === 'FULLSCREEN';
@@ -542,13 +541,10 @@ app.whenReady().then(() => {
           log('[fullscreen] exited, ball restored');
         }
         wasFullscreen = isFs;
-      } catch (e) {
-        log('[fullscreen] check error:', e.message);
-      }
-      setTimeout(checkFullscreen, 2000);
+      } catch (e) { /* ignore */ }
     });
   }
-  setTimeout(checkFullscreen, 3000);
+  setInterval(runFsCheck, 4000); // 4秒检测一次,降低开销
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束

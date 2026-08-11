@@ -16,7 +16,6 @@ dbg('ball init', { innerW: window.innerWidth, innerH: window.innerHeight, screen
 
 // ---------- 拖拽:渲染进程 window.moveTo + resizeTo,不触发主进程膨胀 ----------
 ball.addEventListener('mousedown', (e) => {
-  dbg('mousedown', { button: e.button, sx: e.screenX, sy: e.screenY });
   if (e.button !== 0) return;
   dragging = true;
   moved = false;
@@ -39,10 +38,11 @@ window.addEventListener('mousemove', (e) => {
 
 window.addEventListener('mouseup', () => {
   if (dragging) {
-    dbg('mouseup', { moved, screenX: window.screenX, screenY: window.screenY });
     dragging = false;
-    // 松手后通知主进程做钳制(只调一次 setPosition,膨胀可控)
-    api.action('drag-end', { x: window.screenX, y: window.screenY });
+    if (moved) {
+      // 只有真正移动了才通知主进程做钳制,无移动不浪费 IPC
+      api.action('drag-end', { x: window.screenX, y: window.screenY });
+    }
   }
 });
 
