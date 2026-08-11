@@ -452,6 +452,13 @@ async function getPopupReady() {
       await sleep(800);
     }
   }
+  // 浮层打开后自动聚焦输入框,方便键盘直接输入
+  popupWindow.webContents.executeJavaScript(`
+    (function() {
+      const input = document.querySelector('textarea, input[type="text"], [contenteditable="true"]');
+      if (input) input.focus();
+    })();
+  `).catch(() => {});
   return popupWindow;
 }
 
