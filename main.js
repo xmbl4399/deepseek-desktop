@@ -529,18 +529,22 @@ app.whenReady().then(() => {
   let ballHiddenForFs = false;
   function checkFullscreen() {
     execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fsCheckScript], { timeout: 5000, windowsHide: true }, (err, stdout) => {
-      if (err) return;
-      const isFs = (stdout || '').trim() === 'FULLSCREEN';
-      if (isFs && !wasFullscreen && floatingWindow && !floatingWindow.isDestroyed() && floatingWindow.isVisible()) {
-        floatingWindow.hide();
-        ballHiddenForFs = true;
-        log('[fullscreen] detected, ball hidden');
-      } else if (!isFs && wasFullscreen && ballHiddenForFs && floatingWindow && !floatingWindow.isDestroyed()) {
-        floatingWindow.show();
-        ballHiddenForFs = false;
-        log('[fullscreen] exited, ball restored');
+      try {
+        if (err) return;
+        const isFs = (stdout || '').trim() === 'FULLSCREEN';
+        if (isFs && !wasFullscreen && floatingWindow && !floatingWindow.isDestroyed() && floatingWindow.isVisible()) {
+          floatingWindow.hide();
+          ballHiddenForFs = true;
+          log('[fullscreen] detected, ball hidden');
+        } else if (!isFs && wasFullscreen && ballHiddenForFs && floatingWindow && !floatingWindow.isDestroyed()) {
+          floatingWindow.show();
+          ballHiddenForFs = false;
+          log('[fullscreen] exited, ball restored');
+        }
+        wasFullscreen = isFs;
+      } catch (e) {
+        log('[fullscreen] check error:', e.message);
       }
-      wasFullscreen = isFs;
       setTimeout(checkFullscreen, 2000);
     });
   }
