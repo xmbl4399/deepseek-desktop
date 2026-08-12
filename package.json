@@ -45,7 +45,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": "ui/logo.png"
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "shortcutName": "DeepSeek",

@@ -62,7 +62,7 @@ test('package.json 元数据', () => {
   assert.match(pkg.repository.url, /xmbl4399\/deepseek-desktop/);
   assert.strictEqual(pkg.author, 'xmbl4399');
   // 构建配置:icon 必须指向仓库内文件(可复现构建)
-  assert.strictEqual(pkg.build.win.icon, 'ui/logo.png');
+  assert.strictEqual(pkg.build.win.icon, 'build/icon.ico');
   assert.ok(fs.existsSync(path.join(ROOT, pkg.build.win.icon)), 'win.icon 文件不存在');
   // 自动更新依赖
   assert.ok(pkg.dependencies && pkg.dependencies['electron-updater'], '缺少 electron-updater');
