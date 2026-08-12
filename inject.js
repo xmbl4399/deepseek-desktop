@@ -25,12 +25,6 @@ window.__dsInjectImage = async (b64) => {
     'button[title*="上传" i]',
     '[data-testid*="attach" i]',
   ];
-  const SEND_SELECTORS = [
-    'button[type="submit"]',
-    'button[aria-label*="发送" i]',
-    'button[aria-label*="send" i]',
-    'button[title*="发送" i]',
-  ];
   const INPUT_SELECTOR = 'input[type="file"]';
 
   const makeFile = (b64data) => {

@@ -3,20 +3,38 @@ const {
   BrowserWindow,
   Tray,
   Menu,
-  globalShortcut,
   nativeImage,
   screen,
   ipcMain,
   desktopCapturer,
+  shell,
+  dialog,
 } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { autoUpdater } = require('electron-updater');
+
+// ---------------- 单实例锁:防止双开(开机自启 + 手动双击会启动两个实例,托盘/悬浮球互相打架) ----------------
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!mainWindow.isVisible()) mainWindow.show();
+      mainWindow.focus();
+    } else if (app.isReady()) {
+      showMain();
+    }
+  });
+}
 
 const APP_URL = 'https://chat.deepseek.com/';
 const UI_PRELOAD = path.join(__dirname, 'ui', 'preload-ui.js');
 
 // ---------------- 调试日志(写入 ds-debug.log,便于排查) ----------------
-const LOG_FILE = path.join(__dirname, 'ds-debug.log');
+// 打包后 __dirname 指向只读的 app.asar,日志改写到 userData 目录
+const LOG_FILE = path.join(app.isPackaged ? app.getPath('userData') : __dirname, 'ds-debug.log');
 function log(...args) {
   const line = `[${new Date().toISOString()}] ${args
     .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
@@ -110,8 +128,22 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
+      // 主窗口只加载远程页面,不需要任何本地 preload API
     },
+  });
+
+  // 拦截 window.open:站内跳转放行,外部链接交给系统浏览器,避免开出裸 Electron 窗口
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://chat.deepseek.com')) return { action: 'allow' };
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // 顶层导航到站外时同样交给系统浏览器
+  mainWindow.webContents.on('will-navigate', (e, url) => {
+    if (!url.startsWith('https://chat.deepseek.com')) {
+      e.preventDefault();
+      shell.openExternal(url);
+    }
   });
 
   mainWindow.loadURL(APP_URL);
@@ -198,6 +230,10 @@ function buildAppMenu() {
     { label: '切换悬浮球', click: toggleFloating },
     { type: 'separator' },
     {
+      label: '检查更新…',
+      click: checkForUpdates,
+    },
+    {
       label: '开机启动',
       type: 'radio',
       checked: autoStart,
@@ -237,12 +273,55 @@ function toggleFloating() {
   }
 }
 
-// ---------------- 全局快捷键 ----------------
-function registerShortcuts() {
-  // Ctrl/Cmd + Shift + D : 呼出/聚焦主窗口
-  globalShortcut.register('CommandOrControl+Shift+D', showMain);
-  // Ctrl/Cmd + Shift + Space : 截图提问
-  globalShortcut.register('CommandOrControl+Shift+Space', startScreenshot);
+// ---------------- 自动更新 ----------------
+function checkForUpdates() {
+  if (!app.isPackaged) {
+    dialog.showMessageBox({ type: 'info', message: '开发模式下不检查更新' }).catch(() => {});
+    return;
+  }
+  autoUpdater
+    .checkForUpdates()
+    .then((res) => {
+      const v = res && res.updateInfo && res.updateInfo.version;
+      dialog.showMessageBox({ type: 'info', message: v ? `发现新版本 ${v},正在后台下载…` : '已是最新版本' }).catch(() => {});
+    })
+    .catch((e) => {
+      log('[updater] manual check failed:', e && e.message);
+      dialog.showMessageBox({ type: 'warning', message: '检查更新失败: ' + ((e && e.message) || e) }).catch(() => {});
+    });
+}
+
+function setupAutoUpdater() {
+  if (!app.isPackaged) return; // 开发模式无 app-update.yml,跳过
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on('update-available', (info) => log('[updater] update available:', info && info.version));
+  autoUpdater.on('update-not-available', () => log('[updater] up to date'));
+  autoUpdater.on('error', (e) => log('[updater] error:', e && e.message));
+  autoUpdater.on('update-downloaded', (info) => {
+    log('[updater] downloaded:', info && info.version);
+    dialog
+      .showMessageBox({
+        type: 'info',
+        title: '更新已就绪',
+        message: `新版本 ${info.version} 已下载完成`,
+        detail: '重启应用即可完成安装,是否立即重启?',
+        buttons: ['立即重启', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+      })
+      .then(({ response }) => {
+        if (response === 0) {
+          app.isQuiting = true;
+          autoUpdater.quitAndInstall();
+        }
+      })
+      .catch(() => {});
+  });
+  // 启动 8 秒后静默检查(不打扰用户)
+  setTimeout(() => {
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => log('[updater] background check failed:', e && e.message));
+  }, 8000);
 }
 
 // ---------------- UI 动作分发(悬浮球/浮框 → 主进程) ----------------
@@ -433,6 +512,18 @@ async function getPopupReady() {
     });
     popupWindow.setAlwaysOnTop(true, 'screen-saver');
     popupWindow.loadURL(APP_URL);
+    // 拦截 window.open:站外链接交给系统浏览器
+    popupWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://chat.deepseek.com')) return { action: 'allow' };
+      shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    popupWindow.webContents.on('will-navigate', (e, url) => {
+      if (!url.startsWith('https://chat.deepseek.com')) {
+        e.preventDefault();
+        shell.openExternal(url);
+      }
+    });
     popupWindow.once('ready-to-show', () => popupWindow.show());
     popupWindow.on('closed', () => {
       popupWindow = null;
@@ -509,9 +600,11 @@ function fillPopupText(text) {
 
 // ---------------- 生命周期 ----------------
 app.whenReady().then(() => {
+  if (!gotLock) return; // 未拿到单实例锁,等待退出
+
   createTray();
   createFloatingWindow();
-  registerShortcuts();
+  setupAutoUpdater();
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));
 
@@ -526,32 +619,93 @@ app.whenReady().then(() => {
 
   // 全屏检测:浏览器全屏播放视频时自动隐藏悬浮球,退出全屏后恢复
   const { execFile } = require('child_process');
-  const fsCheckScript = path.join(__dirname, 'check-fullscreen.ps1');
+  // 内嵌 PowerShell 脚本:打包后 asar 内的 .ps1 无法被 powershell -File 读取执行,必须内嵌
+  const FS_CHECK_SCRIPT = `
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public class WAPI {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    public struct RECT { public int Left, Top, Right, Bottom; }
+}
+'@ | Out-Null
+
+if (-not ('WAPI' -as [type])) { Write-Output "WINDOWED"; exit 0 }
+
+# 让本进程 DPI aware,使 GetWindowRect(物理像素)与 Screen.Bounds 单位一致,避免缩放后误判
+[WAPI]::SetProcessDPIAware() | Out-Null
+
+$fw = [WAPI]::GetForegroundWindow()
+$r = New-Object WAPI+RECT
+[WAPI]::GetWindowRect($fw, [ref]$r) | Out-Null
+
+Add-Type -AssemblyName System.Windows.Forms | Out-Null
+
+$tolerance = 8  # 容忍 8px 偏差(浏览器全屏视频可能有微小边框)
+$w = $r.Right - $r.Left
+$h = $r.Bottom - $r.Top
+$full = $false
+# 遍历所有显示器:前台窗口覆盖任一屏幕即判定全屏(支持副屏全屏)
+foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+    $b = $s.Bounds
+    if ($r.Left -le ($b.Left + $tolerance) -and $r.Top -le ($b.Top + $tolerance) -and
+        $r.Right -ge ($b.Right - $tolerance) -and $r.Bottom -ge ($b.Bottom - $tolerance)) {
+        $full = $true
+        break
+    }
+}
+if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
+`;
+  // 精简环境变量:环境块过大(>64KB)会导致 Add-Type 编译失败,检测永久失效(实测 368KB 环境必挂)
+  const MINIMAL_ENV = {
+    PATH: process.env.PATH || '',
+    SystemRoot: process.env.SystemRoot || 'C:\\Windows',
+    COMSPEC: process.env.COMSPEC || 'C:\\Windows\\System32\\cmd.exe',
+    TEMP: process.env.TEMP || 'C:\\Windows\\Temp',
+    TMP: process.env.TMP || 'C:\\Windows\\Temp',
+    USERPROFILE: process.env.USERPROFILE || '',
+  };
   let wasFullscreen = false;
   let ballHiddenForFs = false;
   let fsCheckRunning = false; // 防止 PS 进程堆积
+  let fsCheckTimer = null;
+  const FS_CHECK_INTERVAL = { fullscreen: 800, windowed: 3000 }; // 全屏时高频,平时低频
+  function scheduleFsCheck(delay) {
+    if (fsCheckTimer) clearTimeout(fsCheckTimer);
+    fsCheckTimer = setTimeout(runFsCheck, delay);
+  }
   function runFsCheck() {
     if (fsCheckRunning) return; // 上次还没完成就跳过
     fsCheckRunning = true;
-    execFile('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', fsCheckScript], { timeout: 4000, windowsHide: true }, (err, stdout) => {
-      fsCheckRunning = false;
-      try {
-        if (err) return;
-        const isFs = (stdout || '').trim() === 'FULLSCREEN';
-        if (isFs && !wasFullscreen && floatingWindow && !floatingWindow.isDestroyed() && floatingWindow.isVisible()) {
-          floatingWindow.hide();
-          ballHiddenForFs = true;
-          log('[fullscreen] detected, ball hidden');
-        } else if (!isFs && wasFullscreen && ballHiddenForFs && floatingWindow && !floatingWindow.isDestroyed()) {
-          floatingWindow.show();
-          ballHiddenForFs = false;
-          log('[fullscreen] exited, ball restored');
-        }
-        wasFullscreen = isFs;
-      } catch (e) { /* ignore */ }
-    });
+    execFile(
+      'powershell',
+      ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', FS_CHECK_SCRIPT],
+      { timeout: 4000, windowsHide: true, env: MINIMAL_ENV },
+      (err, stdout) => {
+        fsCheckRunning = false;
+        try {
+          if (err) { log('[fullscreen] check failed:', err.message); }
+          else {
+            const isFs = /FULLSCREEN/.test(stdout || '');
+            if (isFs && !wasFullscreen && floatingWindow && !floatingWindow.isDestroyed() && floatingWindow.isVisible()) {
+              floatingWindow.hide();
+              ballHiddenForFs = true;
+              log('[fullscreen] detected, ball hidden');
+            } else if (!isFs && wasFullscreen && ballHiddenForFs && floatingWindow && !floatingWindow.isDestroyed()) {
+              floatingWindow.show();
+              ballHiddenForFs = false;
+              log('[fullscreen] exited, ball restored');
+            }
+            wasFullscreen = isFs;
+            scheduleFsCheck(isFs ? FS_CHECK_INTERVAL.fullscreen : FS_CHECK_INTERVAL.windowed);
+          }
+        } catch (e) { /* ignore */ }
+      }
+    );
   }
-  setInterval(runFsCheck, 2000);
+  scheduleFsCheck(2000); // 启动 2 秒后首查
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束
@@ -559,6 +713,3 @@ app.on('window-all-closed', () => {
   /* keep running in tray */
 });
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-});

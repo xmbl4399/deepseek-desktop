@@ -1,28 +1,8 @@
+// 对话浮框(加载 chat.deepseek.com)的 preload:只暴露最小动作通道
+// 注:主窗口已不再加载本文件(远程页面无需任何本地 API)
 const { ipcRenderer, contextBridge } = require('electron');
 
 contextBridge.exposeInMainWorld('electron', {
-  setLocalStorage: (key, value) => {
-    localStorage.setItem(key, value);
-  },
-  getLocalStorage: (key) => {
-    return localStorage.getItem(key);
-  },
-  setCookie: (name, value, days) => {
-    const date = new Date();
-    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-    const expires = "expires=" + date.toUTCString();
-    document.cookie = name + "=" + value + ";" + expires + ";path=/";
-  },
-  getCookie: (name) => {
-    const nameEQ = name + "=";
-    const ca = document.cookie.split(';');
-    for (let i = 0; i < ca.length; i++) {
-      let c = ca[i];
-      while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-      if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-    }
-    return null;
-  },
   // 对话浮框:隐藏(由浮框顶部 ✕ 调用)
   hidePopup: () => {
     ipcRenderer.send('ui:action', 'popup-hide');

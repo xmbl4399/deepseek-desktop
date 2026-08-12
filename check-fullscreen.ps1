@@ -1,26 +1,40 @@
+# 全屏检测脚本(独立测试/调试用)
+# 注意:运行时实际执行的是 main.js 内嵌的 FS_CHECK_SCRIPT 副本(打包后 asar 内的 .ps1
+# 无法被 powershell -File 读取执行)。改动此文件时请同步更新 main.js 中的内嵌脚本。
+# 输出:FULLSCREEN / WINDOWED
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public class WAPI {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 '@ | Out-Null
 
+if (-not ('WAPI' -as [type])) { Write-Output "WINDOWED"; exit 0 }
+
+# 让本进程 DPI aware,使 GetWindowRect(物理像素)与 Screen.Bounds 单位一致,避免缩放后误判
+[WAPI]::SetProcessDPIAware() | Out-Null
+
 $fw = [WAPI]::GetForegroundWindow()
 $r = New-Object WAPI+RECT
 [WAPI]::GetWindowRect($fw, [ref]$r) | Out-Null
 
 Add-Type -AssemblyName System.Windows.Forms | Out-Null
-$sw = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Width
-$sh = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds.Height
 
 $tolerance = 8  # 容忍 8px 偏差(浏览器全屏视频可能有微小边框)
 $w = $r.Right - $r.Left
 $h = $r.Bottom - $r.Top
-if ($r.Left -le $tolerance -and $r.Top -le $tolerance -and $w -ge ($sw - $tolerance) -and $h -ge ($sh - $tolerance)) {
-    Write-Output "FULLSCREEN"
-} else {
-    Write-Output "WINDOWED"
+$full = $false
+# 遍历所有显示器:前台窗口覆盖任一屏幕即判定全屏(支持副屏全屏)
+foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+    $b = $s.Bounds
+    if ($r.Left -le ($b.Left + $tolerance) -and $r.Top -le ($b.Top + $tolerance) -and
+        $r.Right -ge ($b.Right - $tolerance) -and $r.Bottom -ge ($b.Bottom - $tolerance)) {
+        $full = $true
+        break
+    }
 }
+if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
