@@ -5,6 +5,14 @@ on:
     branches: [main]
     tags: ['v*']
   pull_request:
+  # 手动触发兜底:tag 与 main 指向同一 commit 时,GH 可能只对 branch 生成 run,
+  # 此时从 Actions 页手动触发并勾选 release 即可构建发布
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '构建并发布 Release(需已打 v* tag)'
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -20,8 +28,8 @@ jobs:
       - run: npm run lint
 
   build-win:
-    # 仅打 tag 时构建安装包并发到 GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    # 仅打 tag 时构建安装包并发到 GitHub Release(或手动触发)
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true')
     runs-on: windows-latest
     needs: test
     steps:
