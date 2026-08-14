@@ -14,6 +14,10 @@ on:
         type: boolean
         default: false
 
+# 新仓库默认 GITHUB_TOKEN 为只读,创建/上传 GitHub Release 必须显式声明写权限
+permissions:
+  contents: write
+
 jobs:
   test:
     runs-on: ubuntu-latest
