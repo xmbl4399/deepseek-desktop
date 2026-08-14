@@ -94,13 +94,17 @@ function hideToolbar() {
 // ---------- 确认 / 取消 ----------
 function doCrop() {
   if (!drag || !fullImage) return;
+  // 截图按物理像素抓取,显示时被 CSS 缩放到窗口尺寸:裁剪必须按原图像素换算,否则选区与实际裁剪错位
+  const k = img.naturalWidth / img.getBoundingClientRect().width;
+  const w = Math.round(drag.w * k);
+  const h = Math.round(drag.h * k);
   const canvas = document.createElement('canvas');
-  canvas.width = drag.w;
-  canvas.height = drag.h;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, drag.x, drag.y, drag.w, drag.h, 0, 0, drag.w, drag.h);
+  ctx.drawImage(img, drag.x * k, drag.y * k, drag.w * k, drag.h * k, 0, 0, w, h);
   const dataUrl = canvas.toDataURL('image/png');
-  api.action('crop', { dataUrl, width: drag.w, height: drag.h });
+  api.action('crop', { dataUrl, width: w, height: h });
 }
 
 function doCancel() {

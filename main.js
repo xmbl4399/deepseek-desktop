@@ -39,9 +39,33 @@ function log(...args) {
   const line = `[${new Date().toISOString()}] ${args
     .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
     .join(' ')}`;
-  try { fs.appendFileSync(LOG_FILE, line + '\n'); } catch (e) {}
+  try {
+    // 日志防膨胀:超过 1MB 滚动为 .old(保留最近一份),避免无限增长
+    if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > 1024 * 1024) {
+      try { fs.renameSync(LOG_FILE, LOG_FILE + '.old'); } catch (e) { /* ignore */ }
+    }
+    fs.appendFileSync(LOG_FILE, line + '\n');
+  } catch (e) { /* ignore */ }
 }
 ipcMain.on('ui:log', (_e, ...args) => log('[ui]', ...args));
+
+// ---------------- 兜底崩溃日志:主进程异常不再静默,方便远程排查 ----------------
+process.on('uncaughtException', (err) => log('[crash] uncaughtException:', (err && err.stack) || err));
+process.on('unhandledRejection', (reason) => log('[crash] unhandledRejection:', reason));
+
+// ---------------- 站外链接白名单:只放行 http/https 交给系统浏览器 ----------------
+function openExternalSafe(url) {
+  try {
+    const u = new URL(String(url));
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      shell.openExternal(u.toString());
+    } else {
+      log('[ds] blocked external open (non-http):', url);
+    }
+  } catch (e) {
+    log('[ds] blocked external open (invalid url):', url);
+  }
+}
 
 let mainWindow = null;
 let tray = null;
@@ -85,6 +109,7 @@ function showBallMenu(pos) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: UI_PRELOAD,
     },
   });
@@ -128,6 +153,7 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       // 主窗口只加载远程页面,不需要任何本地 preload API
     },
   });
@@ -135,14 +161,14 @@ function createMainWindow() {
   // 拦截 window.open:站内跳转放行,外部链接交给系统浏览器,避免开出裸 Electron 窗口
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://chat.deepseek.com')) return { action: 'allow' };
-    shell.openExternal(url);
+    openExternalSafe(url);
     return { action: 'deny' };
   });
   // 顶层导航到站外时同样交给系统浏览器
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('https://chat.deepseek.com')) {
       e.preventDefault();
-      shell.openExternal(url);
+      openExternalSafe(url);
     }
   });
 
@@ -187,6 +213,7 @@ function createFloatingWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: UI_PRELOAD,
     },
   });
@@ -223,6 +250,7 @@ function positionFloating() {
 // ---------------- 托盘菜单 ----------------
 function buildAppMenu() {
   const autoStart = app.getLoginItemSettings().openAtLogin;
+  log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart);
   return Menu.buildFromTemplate([
     { label: '打开 DS 窗口', click: showMain },
     { label: '打开对话浮窗', click: () => togglePopup() },
@@ -235,11 +263,13 @@ function buildAppMenu() {
     },
     {
       label: '开机启动',
-      type: 'radio',
+      // 必须用 checkbox:radio 是单选语义,已勾选的项再点击无法取消勾选(表现为"关不掉")
+      type: 'checkbox',
       checked: autoStart,
       click: (mi) => {
-        app.setLoginItemSettings({ openAtLogin: mi.checked });
-        log('[settings] autoStart=', mi.checked);
+        // 显式传 path:Windows 下 get 判定注册表值是否等于 exe 路径,不传 path 时两者可能不一致导致状态误判
+        app.setLoginItemSettings({ openAtLogin: mi.checked, path: process.execPath });
+        log('[settings] autoStart=', mi.checked, '-> registry now:', app.getLoginItemSettings().openAtLogin);
       },
     },
     { type: 'separator' },
@@ -261,6 +291,8 @@ function createTray() {
   tray.setToolTip('DeepSeek 桌面助手');
 
   tray.setContextMenu(buildAppMenu());
+  // 每次弹出菜单前重建:保证"开机启动"勾选状态与注册表实际一致(只构建一次会显示过期状态)
+  tray.on('right-click', () => tray.setContextMenu(buildAppMenu()));
   tray.on('click', showMain);
   tray.on('double-click', showMain);
 }
@@ -396,18 +428,22 @@ async function startScreenshot() {
   if (floatingWindow && !floatingWindow.isDestroyed()) floatingWindow.hide();
 
   try {
-    const primary = screen.getPrimaryDisplay();
-    const wa = primary.workArea;
+    // 截鼠标所在显示器(支持多屏)。用整个屏幕 bounds 而非 workArea:
+    // desktopCapturer 只能抓整屏,若遮罩只盖 workArea,图片会被拉伸,选区坐标与实际裁剪错位
+    const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+    const bounds = display.bounds;
+    const sf = display.scaleFactor || 1;
     const sources = await desktopCapturer.getSources({
       types: ['screen'],
-      thumbnailSize: { width: wa.width, height: wa.height },
+      // 按物理像素抓图保证清晰;渲染层再按 CSS 缩放,overlay.js 裁剪时按 naturalWidth 换算回原图坐标
+      thumbnailSize: { width: Math.round(bounds.width * sf), height: Math.round(bounds.height * sf) },
     });
-    let src = sources.find((s) => String(s.display_id) === String(primary.id));
+    let src = sources.find((s) => String(s.display_id) === String(display.id));
     if (!src) src = sources[0];
     if (!src) throw new Error('no screen source');
 
-    pendingShot = { dataUrl: src.thumbnail.toDataURL(), area: wa };
-    createOverlay(wa);
+    pendingShot = { dataUrl: src.thumbnail.toDataURL(), area: bounds };
+    createOverlay(bounds);
   } catch (err) {
     log('[ds] screenshot failed:', err.message);
     restoreFloating();
@@ -429,6 +465,7 @@ function createOverlay(area) {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
       preload: UI_PRELOAD,
     },
   });
@@ -507,6 +544,7 @@ async function getPopupReady() {
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
+        sandbox: true,
         preload: path.join(__dirname, 'preload.js'), // 与主窗同一 preload,同一默认 session → 共享登录态
       },
     });
@@ -515,13 +553,13 @@ async function getPopupReady() {
     // 拦截 window.open:站外链接交给系统浏览器
     popupWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith('https://chat.deepseek.com')) return { action: 'allow' };
-      shell.openExternal(url);
+      openExternalSafe(url);
       return { action: 'deny' };
     });
     popupWindow.webContents.on('will-navigate', (e, url) => {
       if (!url.startsWith('https://chat.deepseek.com')) {
         e.preventDefault();
-        shell.openExternal(url);
+        openExternalSafe(url);
       }
     });
     popupWindow.once('ready-to-show', () => popupWindow.show());
@@ -555,7 +593,8 @@ async function getPopupReady() {
 
 function positionPopup() {
   if (!popupWindow) return;
-  const wa = screen.getPrimaryDisplay().workArea;
+  // 在鼠标所在显示器上弹出(副屏用户也能用)
+  const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
   const pw = popupWindow.getSize()[0];
   const ph = popupWindow.getSize()[1];
   // 屏幕右侧 1/4 处,高度居中

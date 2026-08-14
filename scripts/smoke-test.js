@@ -21,7 +21,6 @@ const REQUIRED_FILES = [
   'preload.js',
   'inject.js',
   'popup-inject.js',
-  'index.html',
   'ui/floating.html',
   'ui/floating.js',
   'ui/menu.html',
@@ -84,4 +83,30 @@ test('主窗口不使用 preload', () => {
   // createMainWindow 的 webPreferences 中不应出现 preload 属性
   const seg = main.split('function createMainWindow')[1].split('mainWindow.loadURL(APP_URL);')[0];
   assert.ok(!seg.includes('preload:'), '主窗口不应加载 preload');
+});
+
+test('内嵌全屏检测脚本与 check-fullscreen.ps1 保持同步', () => {
+  const main = read('main.js');
+  const m = main.match(/const FS_CHECK_SCRIPT = `([\s\S]*?)`;/);
+  assert.ok(m, '未找到内嵌 FS_CHECK_SCRIPT');
+  // 去掉注释行和空白后逐行对比,防止改了 ps1 忘改内嵌副本
+  const norm = (s) =>
+    s.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).join('\n');
+  assert.strictEqual(norm(m[1]), norm(read('check-fullscreen.ps1')), '内嵌脚本与 ps1 文件不一致');
+});
+
+test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/状态不过期)', () => {
+  const main = read('main.js');
+  assert.ok(!main.includes("type: 'radio'"), '不应再使用 radio(单选语义关不掉开机启动)');
+  assert.ok(main.includes("type: 'checkbox'"), '开机启动应使用 checkbox');
+  assert.ok(main.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
+  assert.ok(main.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
+});
+
+test('安全加固:远程窗口启用 sandbox,外链走 http/https 白名单', () => {
+  const main = read('main.js');
+  const seg = main.split('function createMainWindow')[1].split('mainWindow.loadURL(APP_URL);')[0];
+  assert.ok(seg.includes('sandbox: true'), '主窗口应启用 sandbox');
+  assert.ok(main.includes('function openExternalSafe'), '应存在外链白名单函数');
+  assert.ok(!main.includes('shell.openExternal(url)'), '不应再有直接 openExternal(url) 调用');
 });
