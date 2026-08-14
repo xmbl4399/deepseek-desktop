@@ -39,7 +39,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx electron-builder --win
+      # --publish never:避免 electron-builder 见到 GH_TOKEN+publish 配置后自行尝试发 GitHub Release 导致失败
+      # (发版统一由下方 action-gh-release 完成)
+      - run: npx electron-builder --win --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: softprops/action-gh-release@v2
