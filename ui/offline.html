@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; connect-src https://chat.deepseek.com">
+<title>网络已断开</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    background: #181a26;
+    font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif;
+    color: #e8eaf6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-app-region: no-drag;
+  }
+  .wrap { text-align: center; padding: 24px; }
+  .icon { margin-bottom: 18px; opacity: 0.9; }
+  h1 { font-size: 17px; font-weight: 600; margin-bottom: 10px; color: #fff; }
+  p.desc { font-size: 12.5px; line-height: 1.7; color: rgba(232, 234, 246, 0.65); margin-bottom: 20px; }
+  button {
+    background: #4d6bfe;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 26px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #3d5bf5; }
+  button:active { background: #3350d9; }
+  #status { margin-top: 16px; font-size: 11.5px; color: rgba(232, 234, 246, 0.45); min-height: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="icon">
+      <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="#4d6bfe" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2 2l20 20"/>
+        <path d="M8.5 16.5a5 5 0 0 1 7 0"/>
+        <path d="M5 12.86a10 10 0 0 1 5.17-2.69"/>
+        <path d="M19 12.86a10 10 0 0 0-2.007-1.523"/>
+        <path d="M12 20h.01"/>
+        <path d="M1.42 9a16 16 0 0 1 4.53-3.27"/>
+        <path d="M22.58 9a16 16 0 0 0-9.06-3.94"/>
+      </svg>
+    </div>
+    <h1>网络连接已断开</h1>
+    <p class="desc">无法加载 DeepSeek 页面，请检查网络连接。<br>网络恢复后将自动重连，也可手动重试。</p>
+    <button id="retry">立即重试</button>
+    <p id="status">正在检测网络…</p>
+  </div>
+<script>
+  (function () {
+    var APP_URL = 'https://chat.deepseek.com/';
+    var PROBE_INTERVAL = 4000;
+    var statusEl = document.getElementById('status');
+    var probing = false;
+    var leaving = false;
+
+    function goOnline() {
+      if (leaving) return;
+      leaving = true;
+      statusEl.textContent = '网络已恢复，正在重新加载…';
+      location.replace(APP_URL);
+    }
+
+    async function probe() {
+      if (probing || leaving) return;
+      probing = true;
+      try {
+        await fetch(APP_URL, { method: 'HEAD', mode: 'no-cors', cache: 'no-store' });
+        goOnline(); // 网络层连通即恢复
+      } catch (e) {
+        statusEl.textContent = '仍无法连接，' + (PROBE_INTERVAL / 1000) + ' 秒后自动重试…';
+      }
+      probing = false;
+    }
+
+    document.getElementById('retry').addEventListener('click', goOnline);
+    setInterval(probe, PROBE_INTERVAL);
+    probe();
+  })();
+</script>
+</body>
+</html>
