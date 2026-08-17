@@ -40,7 +40,7 @@ const browserGlobals = {
 
 module.exports = [
   {
-    files: ['main.js', 'preload.js', 'ui/preload-ui.js', 'scripts/**/*.js'],
+    files: ['main.js', 'preload.js', 'modules/**/*.js', 'ui/preload-ui.js', 'scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
