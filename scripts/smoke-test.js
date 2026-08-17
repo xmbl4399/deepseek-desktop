@@ -89,6 +89,11 @@ test('package.json 元数据', () => {
   // 自动更新依赖
   assert.ok(pkg.dependencies && pkg.dependencies['electron-updater'], '缺少 electron-updater');
   assert.ok(pkg.publish && pkg.publish.provider === 'github', '缺少 publish 配置');
+  // 打包白名单必须覆盖 main.js 依赖的模块目录(漏了会导致 asar 内缺模块,启动即崩)
+  const files = pkg.build.files || [];
+  for (const req of ['main.js', 'preload.js', 'inject.js', 'popup-inject.js', 'modules/**/*', 'ui/**/*']) {
+    assert.ok(files.includes(req), `build.files 缺少 ${req}`);
+  }
 });
 
 test('main.js 与模块包含关键修复', () => {
