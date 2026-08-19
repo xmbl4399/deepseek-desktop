@@ -166,6 +166,12 @@ function create({ log, state }) {
     const cx = Math.min(Math.max(x, wa.x), wa.x + wa.width - PET_W);
     const cy = Math.min(Math.max(y, wa.y), wa.y + wa.height - PET_H);
     w.setPosition(Math.round(cx), Math.round(cy));
+    // 发生钳制时回传实际位置:渲染进程 winX/winY 必须与实际同步,否则拖到屏幕
+    // 边缘后本地坐标漂移,导致后续偏移计算错乱(越拖越偏/拖不动)。
+    // 正常拖拽(未钳制)时 setPosition 即请求值,渲染进程本地值天然一致,无需回传。
+    if (Math.round(cx) !== Math.round(x) || Math.round(cy) !== Math.round(y)) {
+      w.webContents.send('pet-pos', { x: Math.round(cx), y: Math.round(cy) });
+    }
   }
 
   return {

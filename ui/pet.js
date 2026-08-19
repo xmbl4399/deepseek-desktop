@@ -73,7 +73,7 @@ let clickTimer = null;
 let winX = 0;
 let winY = 0;
 api.on('pet-pos', (pos) => {
-  if (pos && typeof pos.x === 'number') {
+  if (pos && typeof pos.x === 'number' && (pos.x !== winX || pos.y !== winY)) {
     winX = pos.x;
     winY = pos.y;
     dbg('pet-pos set', [winX, winY]);
