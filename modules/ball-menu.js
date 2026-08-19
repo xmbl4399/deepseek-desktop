@@ -11,7 +11,7 @@ function create({ log, state }) {
     state.menuWindow = null;
   }
 
-  function showBallMenu(pos) {
+  function showBallMenu(pos, mode) {
     closeMenuWindow();
     const wa = screen.getPrimaryDisplay().workArea;
     const GAP = 8;
@@ -50,10 +50,18 @@ function create({ log, state }) {
     state.menuWindow.setAlwaysOnTop(true, 'pop-up-menu');
     state.menuWindow.loadFile(MENU_PAGE);
 
-    // 加载后读取内容实际尺寸,自适应窗口
+    // 加载后读取内容实际尺寸,自适应窗口;同时高亮当前显示模式项
+    const modeOk = mode === 'ball' || mode === 'pet' || mode === 'off';
     state.menuWindow.webContents.once('did-finish-load', () => {
       state.menuWindow.webContents
-        .executeJavaScript('[document.body.scrollWidth, document.body.scrollHeight]')
+        .executeJavaScript(
+          "(function(){" +
+            "document.querySelectorAll('.mi-mode').forEach(function(el){" +
+            "el.classList.toggle('checked', el.dataset.act === 'mode-" + (modeOk ? mode : '') + "');" +
+            "});" +
+            "return [document.body.scrollWidth, document.body.scrollHeight];" +
+            "})()"
+        )
         .then(([mw, mh]) => {
           if (!state.menuWindow || state.menuWindow.isDestroyed()) return;
           // 内容尺寸 + 少量余量

@@ -9,21 +9,43 @@
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
-const PET_W = 320;
-const PET_H = 180;
-// 人物命中区(窗口像素,与 ui/pet.js 的 HIT 常量一致)
-const HIT = { x: 100, y: 25, w: 120, h: 142.5 };
+const PET_W = 320; // 中档宽度(默认)
+const PET_H = 180; // 中档高度(16:9)
+// 人物命中区(基准 320x180 窗口像素,与 ui/pet.js 的 HIT 常量一致;随窗口尺寸按比例缩放)
+const HIT_BASE = { x: 100, y: 25, w: 120, h: 142.5 };
 // 命中检测轮询间隔(ms)
 const HIT_POLL_MS = 100;
 const PET_PAGE = path.join(__dirname, '..', 'ui', 'pet.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
+
+// 三档尺寸表(纯函数,便于测试):小/中/大(16:9)
+const WIDGET_PET_SIZES = {
+  small: { w: 240, h: 135 },
+  medium: { w: 320, h: 180 },
+  large: { w: 480, h: 270 },
+};
+function widgetPetSize(level) {
+  return WIDGET_PET_SIZES[level] || WIDGET_PET_SIZES.medium;
+}
+
+// 命中区按当前窗口尺寸比例缩放(不取整:基准 320x180 时保持精确的 {100,25,120,142.5})
+function computeHit(w, h) {
+  const sx = w / PET_W;
+  const sy = h / PET_H;
+  return {
+    x: HIT_BASE.x * sx,
+    y: HIT_BASE.y * sy,
+    w: HIT_BASE.w * sx,
+    h: HIT_BASE.h * sy,
+  };
+}
 
 // ---- debug 模式:持续记录窗口位置/鼠标位置/穿透状态,用于分析拖不动问题 ----
 const DEBUG = true;                       // 临时调试开关,分析完改 false 或删除
 const DEBUG_SAMPLE_MS = 2000;             // 周期采样间隔(ms)
 const DEBUG_MOVE_MS = 500;                // 检测到窗口移动时的采样间隔(ms),拖拽中更密集
 
-function create({ log, state }) {
+function create({ log, state, onWindowLoaded }) {
   let hitTimer = null;
   let debugTimer = null;
   let dragLock = false; // 拖拽中强制接收鼠标事件
@@ -31,6 +53,27 @@ function create({ log, state }) {
   let lastIgnore = null;   // 上次穿透状态(状态变化时记录)
   let lastWinPos = null;   // 上次窗口位置(移动检测)
   let lastMouse = null;    // 上次鼠标位置(移动检测)
+  let petW = PET_W;        // 当前窗口尺寸(创建时按尺寸档位计算)
+  let petH = PET_H;
+  let HIT = computeHit(petW, petH); // 当前命中区(随尺寸更新)
+
+  // 主进程在设置变化/启动时调用,同步当前尺寸档位
+  function setWidgetSize(level) {
+    const sz = widgetPetSize(level);
+    petW = sz.w;
+    petH = sz.h;
+    HIT = computeHit(petW, petH);
+  }
+
+  // 尺寸档位变化后原地缩放现有窗口(不销毁重建,避免旧窗口残影/引用竞态)
+  function applyWidgetSize() {
+    if (!state.petWindow || state.petWindow.isDestroyed()) return;
+    const b = state.petWindow.getBounds();
+    state.petWindow.setBounds({ x: b.x, y: b.y, width: petW, height: petH });
+    // 下发新尺寸:渲染层重算命中区/落地偏移(舞台钉 px,窗口膨胀也不影响视觉)
+    state.petWindow.webContents.send('pet-pos', { x: b.x, y: b.y, w: petW, h: petH });
+    log('[pet] resized to', petW + 'x' + petH);
+  }
 
   function debugLog(...args) {
     if (DEBUG) log('[pet-debug]', ...args);
@@ -57,9 +100,10 @@ function create({ log, state }) {
   }
 
   function createPetWindow() {
+    // 按当前尺寸档位创建窗口(小/中/大;命中区同步缩放)
     state.petWindow = new BrowserWindow({
-      width: PET_W,
-      height: PET_H,
+      width: petW,
+      height: petH,
       frame: false,
       transparent: true,
       resizable: false,
@@ -81,29 +125,36 @@ function create({ log, state }) {
     state.petWindow.setIgnoreMouseEvents(true, { forward: true });
     state.petWindow.loadFile(PET_PAGE);
     positionPet();
-    // 加载完成后下发初始窗口位置:渲染进程 window.screenX 不可靠(主进程 setPosition
-    // 不更新渲染进程 screenX),渲染进程用本地 winX/winY 追踪窗口位置
+    // 加载完成后下发初始窗口位置与尺寸:渲染进程 window.screenX 不可靠(主进程
+    // setPosition 驱动),用本地 winX/winY 追踪;尺寸一并下发(渲染层按比例缩放命中区);
+    // 同时通知主进程补发当前前台上下文(页面加载期的事件可能已丢失)
     state.petWindow.webContents.once('did-finish-load', () => {
       const b = state.petWindow.getBounds();
-      state.petWindow.webContents.send('pet-pos', { x: b.x, y: b.y });
+      state.petWindow.webContents.send('pet-pos', { x: b.x, y: b.y, w: petW, h: petH });
+      if (typeof onWindowLoaded === 'function') onWindowLoaded();
     });
     startHitDetect();
     debugLog('window created at', state.petWindow.getPosition());
-    log('[pet] window created at', state.petWindow.getPosition());
+    log('[pet] window created at', state.petWindow.getPosition(), 'size', petW + 'x' + petH);
     if (DEBUG) debugTimer = setTimeout(debugSample, 1000); // 启动 1s 后开始采样
 
-    state.petWindow.on('closed', () => {
-      state.petWindow = null;
+    const win = state.petWindow;
+    win.on('closed', () => {
+      // 仅当仍是本窗口引用时才清空,避免异步关闭期间新窗口引用被误清(残影/引用竞态)
+      if (state.petWindow === win) state.petWindow = null;
       stopHitDetect();
       if (debugTimer) { clearTimeout(debugTimer); debugTimer = null; }
     });
   }
 
-  // 默认位置:主屏右下角贴底(落地对齐由渲染进程 translateY 完成)
+  // 默认位置:人物主体(HIT 区)右缘贴屏幕右缘、垂直居中
+  // (窗口右缘会悬出屏幕,人物才真正"贴边";与拖拽钳制到右缘时的位置一致)
   function positionPet() {
     if (!state.petWindow) return;
     const wa = screen.getPrimaryDisplay().workArea;
-    state.petWindow.setPosition(wa.x + wa.width - PET_W - 24, wa.y + wa.height - PET_H);
+    const x = wa.x + wa.width - HIT.x - HIT.w;
+    const y = wa.y + Math.round(wa.height / 2) - Math.round(petH / 2);
+    state.petWindow.setPosition(x, y);
   }
 
   function destroyPetWindow() {
@@ -162,13 +213,21 @@ function create({ log, state }) {
     const w = state.petWindow;
     if (!w || w.isDestroyed()) return;
     const wa = screen.getPrimaryDisplay().workArea;
-    // 钳制在屏幕内
-    const cx = Math.min(Math.max(x, wa.x), wa.x + wa.width - PET_W);
-    const cy = Math.min(Math.max(y, wa.y), wa.y + wa.height - PET_H);
-    w.setPosition(Math.round(cx), Math.round(cy));
+    // 钳制:人物主体(HIT 区)始终完整在屏幕内,窗口透明边可悬出屏幕外(贴边站立)
+    //   窗口左缘 ∈ [wa.x - HIT.x, wa.x + wa.width - HIT.x - HIT.w]
+    //   窗口顶缘 ∈ [wa.y - HIT.y, wa.y + wa.height - HIT.y - HIT.h]
+    const minX = wa.x - HIT.x;
+    const maxX = wa.x + wa.width - HIT.x - HIT.w;
+    const minY = wa.y - HIT.y;
+    const maxY = wa.y + wa.height - HIT.y - HIT.h;
+    const cx = Math.min(Math.max(x, minX), maxX);
+    const cy = Math.min(Math.max(y, minY), maxY);
+    // setBounds 同时钉住当前尺寸:GPU 禁用环境下透明窗口被脚本移动会尺寸漂移
+    // (探针复现 320→543px),钉尺寸保证鲸鱼娘始终是设定大小
+    w.setBounds({ x: Math.round(cx), y: Math.round(cy), width: petW, height: petH });
     // 发生钳制时回传实际位置:渲染进程 winX/winY 必须与实际同步,否则拖到屏幕
     // 边缘后本地坐标漂移,导致后续偏移计算错乱(越拖越偏/拖不动)。
-    // 正常拖拽(未钳制)时 setPosition 即请求值,渲染进程本地值天然一致,无需回传。
+    // 正常拖拽(未钳制)时 setBounds 即请求值,渲染进程本地值天然一致,无需回传。
     if (Math.round(cx) !== Math.round(x) || Math.round(cy) !== Math.round(y)) {
       w.webContents.send('pet-pos', { x: Math.round(cx), y: Math.round(cy) });
     }
@@ -181,6 +240,9 @@ function create({ log, state }) {
     setIgnore,
     setDragLock,
     moveWindow,
+    setWidgetSize,
+    applyWidgetSize,
+    widgetPetSize,
     PET_W,
     PET_H,
   };

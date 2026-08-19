@@ -34,6 +34,9 @@ const REQUIRED_FILES = [
   'ui/pet.html',
   'ui/pet.js',
   'ui/pet-assets/待机呼吸休闲.webm',
+  'ui/pet-assets/原地左转奔跑.webm',
+  'ui/pet-assets/写代码.webm',
+  'ui/pet-assets/打瞌睡被惊醒.webm',
   'modules/logger.js',
   'modules/state.js',
   'modules/security.js',
@@ -47,6 +50,7 @@ const REQUIRED_FILES = [
   'modules/shortcuts.js',
   'modules/pet.js',
   'modules/mode.js',
+  'modules/focus.js',
 ];
 
 test('关键文件存在', () => {
@@ -79,6 +83,7 @@ test('JS 语法检查(node --check)', () => {
     'modules/shortcuts.js',
     'modules/pet.js',
     'modules/mode.js',
+    'modules/focus.js',
   ];
   for (const f of jsFiles) {
     execFileSync(NODE, ['--check', path.join(ROOT, f)], { stdio: 'pipe' });
@@ -140,6 +145,9 @@ test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/�
   const autoStartSeg = tray.split("label: '开机启动'")[1].split('});')[0];
   assert.ok(!autoStartSeg.includes("type: 'radio'"), '开机启动不应使用 radio(单选语义关不掉)');
   assert.ok(tray.includes("type: 'checkbox'"), '开机启动应使用 checkbox');
+  assert.ok(tray.includes("label: '前台感知开关'"), '托盘缺少前台感知开关');
+  assert.ok(tray.includes('getForegroundAware'), '前台感知开关状态应来自持久化设置');
+  assert.ok(tray.includes('setForegroundAware'), '前台感知开关应走 setForegroundAware');
   assert.ok(tray.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
   assert.ok(tray.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
   // 显示模式子菜单:悬浮球/鲸鱼娘 radio 二选一
@@ -147,6 +155,10 @@ test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/�
   assert.ok(tray.includes("label: '悬浮球'"), '显示模式子菜单缺少悬浮球项');
   assert.ok(tray.includes("label: '鲸鱼娘'"), '显示模式子菜单缺少鲸鱼娘项');
   assert.ok(tray.includes('setDisplayMode'), '显示模式切换应走 setDisplayMode');
+  // 尺寸子菜单:小/中/大
+  assert.ok(tray.includes("label: '尺寸'"), '托盘应提供尺寸子菜单');
+  assert.ok(tray.includes("label: '小'") && tray.includes("label: '中'") && tray.includes("label: '大'"), '尺寸子菜单缺少 小/中/大');
+  assert.ok(tray.includes('setWidgetSize'), '尺寸切换应走 setWidgetSize');
 });
 
 test('安全加固:远程窗口启用 sandbox,外链走 http/https 白名单,拦截内网地址', () => {
@@ -172,12 +184,17 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   const mode = read('modules/mode.js');
   const pet = read('modules/pet.js');
   const main = read('main.js');
-  // mode 模块:状态记忆 + 切换 + 全屏联动 + 活动窗口
+  // mode 模块:状态记忆 + 切换 + 全屏联动 + 活动窗口 + 三态(含"关闭显示"off)
   assert.ok(mode.includes('ds-settings.json'), '显示模式应持久化到 userData/ds-settings.json');
   assert.ok(mode.includes('loadMode') && mode.includes('saveMode'), '缺少模式读写');
   assert.ok(mode.includes('hideForFs') && mode.includes('restoreFromFs'), '缺少全屏联动');
   assert.ok(mode.includes('toggleMode') && mode.includes('setDisplayMode'), '缺少模式切换');
   assert.ok(mode.includes('getActiveWindow'), '缺少活动窗口查询(全屏检测依赖)');
+  assert.ok(mode.includes("'off'"), '显示模式应支持"关闭显示"(off)');
+  // 托盘:显示模式 radio 三选一(含关闭显示)
+  const tray = read('modules/tray.js');
+  assert.ok(tray.includes("label: '关闭显示'"), '托盘显示模式子菜单缺少关闭显示项');
+  assert.ok(tray.includes("checked: currentMode === 'off'"), '关闭显示 radio 未按当前模式勾选');
   // pet 模块:透明窗口 + 点击穿透
   assert.ok(pet.includes('transparent: true'), '鲸鱼娘窗口应透明');
   assert.ok(pet.includes('setIgnoreMouseEvents'), '鲸鱼娘窗口应支持点击穿透');
@@ -185,6 +202,33 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(pet.includes('setDragLock'), '鲸鱼娘缺少拖拽锁');
   assert.ok(pet.includes('moveWindow'), '鲸鱼娘缺少主进程移动方法');
   assert.ok(pet.includes('screen.getCursorScreenPoint'), '应轮询光标位置做命中检测');
+  // floating 模块:主进程移动 + 位置回传 + 尺寸档位(拖拽与鲸鱼娘对齐)
+  const floating = read('modules/floating.js');
+  assert.ok(floating.includes('moveWindow'), '悬浮球缺少主进程移动方法');
+  assert.ok(floating.includes("'ball-pos'"), '悬浮球缺少位置回传 ball-pos');
+  assert.ok(floating.includes('widgetBallSize') && floating.includes('setWidgetSize'), '悬浮球缺少尺寸档位(小/中/大)');
+  // 鲸鱼娘尺寸档位 + 页面 100% 填充
+  assert.ok(pet.includes('widgetPetSize') && pet.includes('setWidgetSize'), '鲸鱼娘缺少尺寸档位(小/中/大)');
+  const petHtml = read('ui/pet.html');
+  assert.ok(petHtml.includes('width: 100%') && petHtml.includes('height: 100%'), 'pet.html 应 100% 填充窗口');
+  const uiCss = read('ui/ui.css');
+  assert.ok(/#ball\s*\{[\s\S]*width: 100%/.test(uiCss), '悬浮球应随窗口尺寸缩放');
+  // 尺寸档位设置:mode 持久化 + main 动作 + 托盘子菜单
+  assert.ok(mode.includes('widgetSize') && mode.includes('getWidgetSize') && mode.includes('setWidgetSize'), 'mode 缺少尺寸档位');
+  assert.ok(mode.includes('rebuildActiveWindow'), 'mode 缺少重建窗口(尺寸档位生效)');
+  assert.ok(main.includes('setWidgetSize'), 'main 缺少尺寸档位动作');
+  assert.ok(main.includes('rebuildActiveWindow'), 'main 未接重建窗口');
+  // 悬浮球渲染层:拖拽走 IPC,不再依赖渲染进程 moveTo
+  const uiFloating = read('ui/floating.js');
+  assert.ok(uiFloating.includes("'ball-move'"), '悬浮球拖拽应走 ball-move IPC');
+  // 鲸鱼娘渲染层:移动方向按当前朝向(修复东张西望后反向行走)+ 跑步动画入池
+  const petUi = read('ui/pet.js');
+  assert.ok(petUi.includes("const dir = facing === 'right' ? 1 : -1;"), '移动方向应按当前朝向(修复反向行走)');
+  assert.ok(petUi.includes('原地左转奔跑'), '移动池应含跑步动画(原地左转奔跑)');
+  // 右键菜单:显示模式三项(勾选高亮)+ 退出
+  const menuHtml = read('ui/menu.html');
+  assert.ok(menuHtml.includes('data-act="mode-ball"') && menuHtml.includes('data-act="mode-pet"') && menuHtml.includes('data-act="mode-off"'), '右键菜单缺少显示模式三项');
+  assert.ok(menuHtml.includes('data-act="quit"'), '右键菜单缺少退出项');
   // 主进程装配
   assert.ok(main.includes("require('./modules/mode')"), 'main.js 未装配 mode 模块');
   assert.ok(main.includes("require('./modules/pet')"), 'main.js 未装配 pet 模块');
@@ -193,4 +237,32 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(main.includes("case 'pet-drag'"), '缺少 pet-drag 动作(拖拽锁)');
   assert.ok(main.includes("case 'pet-move'"), '缺少 pet-move 动作(主进程移动)');
   assert.ok(main.includes("case 'toggle-mode'"), '缺少 toggle-mode 动作(循环切换)');
+  assert.ok(main.includes("case 'ball-move'"), '缺少 ball-move 动作(主进程移动悬浮球)');
+  assert.ok(main.includes("case 'mode-ball'") && main.includes("case 'mode-off'"), '缺少显式模式动作(mode-ball/mode-off)');
+});
+
+test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配完整', () => {
+  const mode = read('modules/mode.js');
+  const main = read('main.js');
+  const focus = read('modules/focus.js');
+  const petUi = read('ui/pet.js');
+  const floatingUi = read('ui/floating.js');
+  // mode:前台感知开关设置(默认开,持久化)
+  assert.ok(mode.includes('foregroundAware'), 'mode 应管理 foregroundAware 设置');
+  assert.ok(mode.includes('getForegroundAware') && mode.includes('setForegroundAware'), '缺少前台感知读写');
+  // 主进程:装配 focus;全屏脚本 DS_FG_MODE 门控;上下文广播
+  assert.ok(main.includes("require('./modules/focus')"), 'main.js 未装配 focus 模块');
+  assert.ok(main.includes('DS_FG_MODE'), '全屏脚本缺少 DS_FG_MODE 门控(关=不读前台)');
+  assert.ok(main.includes("'pet-context'"), '缺少前台上下文广播 pet-context');
+  // focus:进程名分类(含本应用 deepseek)
+  assert.ok(focus.includes('function classify'), '缺少前台进程分类');
+  assert.ok(focus.includes('deepseek'), '前台分类应识别本应用(deepseek)');
+  // 渲染层:鲸鱼娘订阅上下文(deepseek=工作动画)+ 走回初始位置;悬浮球订阅上下文徽标
+  assert.ok(petUi.includes("'pet-context'"), '鲸鱼娘未订阅前台上下文');
+  assert.ok(petUi.includes('deepseek') && petUi.includes('setAnimLoop'), '鲸鱼娘缺少 deepseek 工作动画(循环)');
+  assert.ok(petUi.includes('applyPerception'), '鲸鱼娘缺少状态感知落地');
+  assert.ok(petUi.includes('tryReturnHome') && petUi.includes('homeX'), '鲸鱼娘缺少走回初始位置逻辑');
+  assert.ok(petUi.includes('showBubble') && petUi.includes('DRINK_MSGS'), '鲸鱼娘缺少趣味气泡');
+  assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
+  assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');
 });

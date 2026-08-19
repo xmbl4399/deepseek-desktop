@@ -1,4 +1,4 @@
-// 对话小浮框:380x620 无边框置顶窗,加载 chat.deepseek.com 并注入 UI
+// 对话小浮框:360x720 无边框置顶窗(标准 360P 9:18 竖屏),加载 chat.deepseek.com 并注入 UI
 // 与主窗共用 preload(preload.js)+ 同一默认 session → 共享登录态
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
@@ -41,10 +41,10 @@ function create({ log, state, security, offline, onWindowCreated }) {
   async function getPopupReady() {
     if (!state.popupWindow || state.popupWindow.isDestroyed()) {
       state.popupWindow = new BrowserWindow({
-        width: 380,
-        height: 620,
+        width: 360,
+        height: 720,
         minWidth: 340,
-        minHeight: 460,
+        minHeight: 480,
         icon: LOGO,
         frame: false,
         resizable: true,
@@ -100,8 +100,8 @@ function create({ log, state, security, offline, onWindowCreated }) {
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const pw = state.popupWindow.getSize()[0];
     const ph = state.popupWindow.getSize()[1];
-    // 屏幕右侧 1/4 处,高度居中
-    const x = wa.x + Math.round((wa.width * 3) / 4) - Math.round(pw / 2);
+    // 屏幕右侧 4/5 处,高度居中
+    const x = wa.x + Math.round((wa.width * 4) / 5) - Math.round(pw / 2);
     const y = wa.y + Math.round((wa.height - ph) / 2);
     state.popupWindow.setPosition(x, y);
   }

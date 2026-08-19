@@ -5,9 +5,9 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; media-src 'self'">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
-    html, body { background: transparent; overflow: hidden; width: 320px; height: 180px; }
-    /* 舞台:16:9,translateY 落地对齐由 JS 设置(脚贴窗口底=屏幕底) */
-    #stage { position: relative; width: 320px; height: 180px; pointer-events: none; }
+    html, body { background: transparent; overflow: hidden; width: 100%; height: 100%; }
+    /* 舞台:填满窗口(尺寸随 DIP 自适应),translateY 落地对齐由 JS 设置 */
+    #stage { position: relative; width: 100%; height: 100%; pointer-events: none; }
     /* 双缓冲 video:完全穿透,交互统一由 #hit 层负责 */
     video.pv {
       position: absolute; inset: 0; width: 100%; height: 100%;
@@ -18,6 +18,40 @@
     /* 命中层:覆盖人物区域(HIT_BOX),唯一可交互区域 */
     #hit { position: absolute; pointer-events: auto; cursor: grab; z-index: 1; }
     #hit.dragging { cursor: grabbing; }
+    /* 趣味气泡(抄 dsh-dafeiyu 的气泡思路:轻量文字气泡,悬在头顶)
+       尺寸随鲸鱼娘缩放:字号由 JS 按 PET_W/320 设置,其余用 em 自动跟随 */
+    #bubble {
+      position: absolute;
+      top: 0.17em;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: 82%;
+      padding: 0.42em 0.92em;
+      border-radius: 0.83em;
+      background: rgba(24, 26, 38, 0.94);
+      border: 0.08em solid rgba(255, 255, 255, 0.12);
+      color: #e8eaf6;
+      font-size: 12px; /* JS 按窗口尺寸缩放 */
+      line-height: 1.4;
+      text-align: center;
+      white-space: nowrap;
+      pointer-events: none;
+      z-index: 5;
+      opacity: 0;
+      transition: opacity .2s ease;
+    }
+    #bubble.show { opacity: 1; }
+    /* 小尾巴(指向下方,em 随字号缩放) */
+    #bubble::after {
+      content: '';
+      position: absolute;
+      bottom: -0.42em;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 0.42em solid transparent;
+      border-top-color: rgba(24, 26, 38, 0.94);
+      border-bottom: none;
+    }
     @media (prefers-reduced-motion: reduce) { video.pv { transition: none; } }
   </style>
 </head>
@@ -25,6 +59,7 @@
   <div id="stage">
     <video id="va" class="pv is-front" muted playsinline autoplay title="鲸鱼娘"></video>
     <video id="vb" class="pv" muted playsinline autoplay title="鲸鱼娘"></video>
+    <div id="bubble"></div>
     <div id="hit"></div>
   </div>
   <script src="pet.js"></script>

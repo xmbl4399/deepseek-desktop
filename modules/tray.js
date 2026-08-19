@@ -8,7 +8,8 @@ function create({ log, state, actions }) {
   function buildAppMenu() {
     const autoStart = app.getLoginItemSettings().openAtLogin;
     const currentMode = actions.getDisplayMode ? actions.getDisplayMode() : 'ball';
-    log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart, 'displayMode =', currentMode);
+    const currentSize = actions.getWidgetSize ? actions.getWidgetSize() : 'medium';
+    log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart, 'displayMode =', currentMode, 'size =', currentSize);
     return Menu.buildFromTemplate([
       { label: '打开主窗口', click: actions.showMain },
       { label: '打开对话浮窗', click: () => actions.togglePopup() },
@@ -16,7 +17,7 @@ function create({ log, state, actions }) {
       { type: 'separator' },
       {
         label: '显示模式',
-        // radio 单选语义在这里正是想要的:悬浮球/鲸鱼娘二选一,当前模式勾选
+        // radio 单选语义在这里正是想要的:悬浮球/鲸鱼娘/关闭显示 三选一,当前模式勾选
         submenu: [
           {
             label: '悬浮球',
@@ -30,12 +31,49 @@ function create({ log, state, actions }) {
             checked: currentMode === 'pet',
             click: () => actions.setDisplayMode('pet'),
           },
+          {
+            label: '关闭显示',
+            type: 'radio',
+            checked: currentMode === 'off',
+            click: () => actions.setDisplayMode('off'),
+          },
+        ],
+      },
+      {
+        label: '尺寸',
+        // radio 三选一:小/中/大(悬浮球与鲸鱼娘共用档位),重建当前窗口生效
+        submenu: [
+          {
+            label: '小',
+            type: 'radio',
+            checked: currentSize === 'small',
+            click: () => actions.setWidgetSize('small'),
+          },
+          {
+            label: '中',
+            type: 'radio',
+            checked: currentSize === 'medium',
+            click: () => actions.setWidgetSize('medium'),
+          },
+          {
+            label: '大',
+            type: 'radio',
+            checked: currentSize === 'large',
+            click: () => actions.setWidgetSize('large'),
+          },
         ],
       },
       { type: 'separator' },
       {
         label: '检查更新…',
         click: actions.checkForUpdates,
+      },
+      {
+        label: '前台感知开关',
+        // 关 = 完全不读取前台窗口:全屏自动隐藏与前台上下文动画同时失效(隐私默认)
+        type: 'checkbox',
+        checked: actions.getForegroundAware ? actions.getForegroundAware() : true,
+        click: (mi) => actions.setForegroundAware(mi.checked),
       },
       {
         label: '开机启动',

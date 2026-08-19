@@ -1,7 +1,8 @@
 # 全屏检测脚本(独立测试/调试用)
 # 注意:运行时实际执行的是 main.js 内嵌的 FS_CHECK_SCRIPT 副本(打包后 asar 内的 .ps1
 # 无法被 powershell -File 读取执行)。改动此文件时请同步更新 main.js 中的内嵌脚本。
-# 输出:FULLSCREEN / WINDOWED
+# 输出:FULLSCREEN / WINDOWED;DS_FG_MODE=1 时追加进程名(FULLSCREEN|chrome / WINDOWED|Code)
+# 前台感知开关关闭时(DS_FG_MODE≠1)不读取任何前台信息(隐私门控)
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
@@ -9,6 +10,7 @@ public class WAPI {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 '@ | Out-Null
@@ -37,4 +39,16 @@ foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
         break
     }
 }
-if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
+# 前台感知:仅 DS_FG_MODE=1 时读取前台进程名(隐私门控);默认只输出全屏标志
+$suffix = ""
+if ($env:DS_FG_MODE -eq "1") {
+    $fwPid = 0
+    [WAPI]::GetWindowThreadProcessId($fw, [ref]$fwPid) | Out-Null
+    try {
+        $proc = Get-Process -Id $fwPid -ErrorAction Stop
+        $suffix = "|" + $proc.ProcessName
+    } catch {
+        $suffix = "|unknown"
+    }
+}
+if ($full) { Write-Output ("FULLSCREEN" + $suffix) } else { Write-Output ("WINDOWED" + $suffix) }

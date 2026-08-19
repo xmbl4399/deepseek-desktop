@@ -10,10 +10,24 @@ const state = require('./modules/state');
 const security = require('./modules/security').create({ log });
 const offline = require('./modules/offline').create({ log });
 const ballMenu = require('./modules/ball-menu').create({ log, state });
-const floating = require('./modules/floating').create({ log, state });
-const pet = require('./modules/pet').create({ log, state });
+
+// 最后广播的前台上下文;窗口(重)加载完成后补发,避免"加载期事件丢失"导致感知不生效
+let lastContext = null;
+function resendContextToWidgets() {
+  if (lastContext === null) return;
+  for (const w of [state.petWindow, state.floatingWindow]) {
+    if (w && !w.isDestroyed()) {
+      try { w.webContents.send('pet-context', { category: lastContext }); } catch (e) { /* ignore */ }
+    }
+  }
+}
+
+const floating = require('./modules/floating').create({ log, state, onWindowLoaded: resendContextToWidgets });
+const pet = require('./modules/pet').create({ log, state, onWindowLoaded: resendContextToWidgets });
 // 显示模式协调(悬浮球/鲸鱼娘),依赖 floating + pet,须在两者之后装配
 const mode = require('./modules/mode').create({ log, state, floating, pet });
+// 前台程序分类(前台感知开关开启时:焦点在 DeepSeek 触发工作动画,其余按程序类型适配)
+const focus = require('./modules/focus');
 // popup 的 onWindowCreated 延迟引用 shortcutsApi(shortcuts 依赖 actions,actions 依赖 popup,靠闭包解环)
 let shortcutsApi = null;
 const popup = require('./modules/popup').create({
@@ -53,9 +67,9 @@ const APP_URL = 'https://chat.deepseek.com/';
 // ---------------- 主窗口 ----------------
 function createMainWindow() {
   state.mainWindow = new BrowserWindow({
-    width: 960,
-    height: 600,
-    minWidth: 720,
+    width: 768,
+    height: 576,
+    minWidth: 640,
     minHeight: 480,
     icon: path.join(__dirname, 'ui', 'logo.png'),
     show: false,
@@ -126,11 +140,20 @@ function onUiAction(name, payload) {
       screenshot.startScreenshot();
       break;
     case 'ball-menu':
-      ballMenu.showBallMenu(payload);
+      ballMenu.showBallMenu(payload, mode.getDisplayMode());
       break;
     case 'toggle-mode':
-      // 右键菜单"切换显示模式":悬浮球 ↔ 鲸鱼娘 循环
+      // 右键菜单"切换显示模式"(旧项兜底):悬浮球 ↔ 鲸鱼娘 循环
       mode.toggleMode();
+      break;
+    case 'mode-ball':
+      mode.setDisplayMode('ball');
+      break;
+    case 'mode-pet':
+      mode.setDisplayMode('pet');
+      break;
+    case 'mode-off':
+      mode.setDisplayMode('off');
       break;
     case 'pet-drag':
       // 鲸鱼娘拖拽锁:拖拽期间强制穿透关闭,防快速甩动闪断
@@ -152,14 +175,11 @@ function onUiAction(name, payload) {
     case 'cancel':
       screenshot.closeOverlay();
       break;
-    case 'drag-end': {
-      // 拖拽结束:渲染进程已用 window.moveTo 落位,主进程只做钳制+尺寸修正
-      if (state.floatingWindow && !state.floatingWindow.isDestroyed() && payload && typeof payload.x === 'number') {
-        const p = floating.clampBall(payload.x, payload.y);
-        state.floatingWindow.setBounds({ x: p.x, y: p.y, width: floating.BALL_SIZE, height: floating.BALL_SIZE });
-      }
+    case 'ball-move':
+      // 悬浮球移动:渲染进程计算目标坐标,主进程 setPosition + 钳制(半身悬出贴边,
+      // 与鲸鱼娘 pet-move 同机制;渲染进程 window.moveTo 被 Chromium 钳制无法贴边)
+      floating.moveWindow(payload && payload.x, payload && payload.y);
       break;
-    }
     case 'quit':
       app.isQuiting = true;
       app.quit();
@@ -183,7 +203,21 @@ const actions = {
   checkForUpdates: () => updater.checkForUpdates(),
   setDisplayMode: (m) => mode.setDisplayMode(m),
   getDisplayMode: () => mode.getDisplayMode(),
+  setForegroundAware: (v) => {
+    mode.setForegroundAware(v);
+    // 开关状态变化时同步全屏检测/前台感知的运行与停止
+    if (fgToggleHandler) fgToggleHandler();
+  },
+  getForegroundAware: () => mode.getForegroundAware(),
+  setWidgetSize: (s) => {
+    mode.setWidgetSize(s);
+    mode.rebuildActiveWindow(); // 重建当前窗口应用新尺寸(尽量保持位置)
+  },
+  getWidgetSize: () => mode.getWidgetSize(),
 };
+
+// 前台感知开关的联动句柄(whenReady 内注册):开=启动前台轮询,关=停止且不再采集
+let fgToggleHandler = null;
 
 // 托盘与快捷键依赖 actions,须在 actions 定义后实例化
 const tray = require('./modules/tray').create({ log, state, actions });
@@ -195,6 +229,9 @@ app.whenReady().then(() => {
 
   mode.loadMode(); // 同步读持久化的显示模式(必须在建窗前)
   tray.createTray();
+  // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)
+  floating.setWidgetSize(mode.getWidgetSize());
+  pet.setWidgetSize(mode.getWidgetSize());
   mode.createActiveWindow(); // 按持久化模式建窗(默认悬浮球)
   updater.setupAutoUpdater();
 
@@ -209,9 +246,16 @@ app.whenReady().then(() => {
 
   app.on('activate', () => showMain());
 
-  // 全屏检测:浏览器全屏播放视频时自动隐藏悬浮球,退出全屏后恢复
+  // 前台感知(由"前台感知开关"统一控制,默认开):
+  //   - 全屏自动隐藏:全屏播放视频/游戏时隐藏悬浮球/鲸鱼娘,退出恢复
+  //   - 前台上下文:空闲时按前台程序类型驱动桌宠小动作
+  //   开关关闭时:完全不读取前台窗口(DS_FG_MODE 门控),两项功能同时失效(隐私默认)
   const { execFile } = require('child_process');
+  let wasFullscreen = false;
+  let fsCheckRunning = false; // 防止 PS 进程堆积
+  let fsCheckTimer = null;
   // 内嵌 PowerShell 脚本:打包后 asar 内的 .ps1 无法被 powershell -File 读取执行,必须内嵌
+  // (与 check-fullscreen.ps1 保持同步,smoke-test 逐行比对)
   const FS_CHECK_SCRIPT = `
 Add-Type @'
 using System;
@@ -220,6 +264,7 @@ public class WAPI {
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
     public struct RECT { public int Left, Top, Right, Bottom; }
 }
 '@ | Out-Null
@@ -248,7 +293,19 @@ foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
         break
     }
 }
-if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
+# 前台感知:仅 DS_FG_MODE=1 时读取前台进程名(隐私门控);默认只输出全屏标志
+$suffix = ""
+if ($env:DS_FG_MODE -eq "1") {
+    $fwPid = 0
+    [WAPI]::GetWindowThreadProcessId($fw, [ref]$fwPid) | Out-Null
+    try {
+        $proc = Get-Process -Id $fwPid -ErrorAction Stop
+        $suffix = "|" + $proc.ProcessName
+    } catch {
+        $suffix = "|unknown"
+    }
+}
+if ($full) { Write-Output ("FULLSCREEN" + $suffix) } else { Write-Output ("WINDOWED" + $suffix) }
 `;
   // 精简环境变量:环境块过大(>64KB)会导致 Add-Type 编译失败,检测永久失效(实测 368KB 环境必挂)
   const MINIMAL_ENV = {
@@ -259,10 +316,19 @@ if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
     TMP: process.env.TMP || 'C:\\Windows\\Temp',
     USERPROFILE: process.env.USERPROFILE || '',
   };
-  let wasFullscreen = false;
-  let fsCheckRunning = false; // 防止 PS 进程堆积
-  let fsCheckTimer = null;
   const FS_CHECK_INTERVAL = { fullscreen: 800, windowed: 3000 }; // 全屏时高频,平时低频
+
+  // 广播前台上下文类别(渲染层:空闲时按类别演动画;聊天状态优先于它)
+  function broadcastContext(category) {
+    lastContext = category;
+    log('[focus] foreground category =', category);
+    for (const w of [state.petWindow, state.floatingWindow]) {
+      if (w && !w.isDestroyed()) {
+        try { w.webContents.send('pet-context', { category }); } catch (e) { /* ignore */ }
+      }
+    }
+  }
+
   function scheduleFsCheck(delay) {
     if (fsCheckTimer) clearTimeout(fsCheckTimer);
     fsCheckTimer = setTimeout(runFsCheck, delay);
@@ -273,20 +339,28 @@ if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
     execFile(
       'powershell',
       ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', FS_CHECK_SCRIPT],
-      { timeout: 4000, windowsHide: true, env: MINIMAL_ENV },
+      // DS_FG_MODE 门控:开关关闭时不采集任何前台信息
+      { timeout: 4000, windowsHide: true, env: { ...MINIMAL_ENV, DS_FG_MODE: mode.getForegroundAware() ? '1' : '0' } },
       (err, stdout) => {
         fsCheckRunning = false;
         try {
           if (err) {
             log('[fullscreen] check failed:', err.message);
           } else {
-            const isFs = /FULLSCREEN/.test(stdout || '');
+            const out = String(stdout || '');
+            const [flag, proc] = out.split('|');
+            const isFs = flag === 'FULLSCREEN';
             if (isFs && !wasFullscreen) {
               mode.hideForFs(); // 隐藏当前显示模式窗口(悬浮球或鲸鱼娘)
             } else if (!isFs && wasFullscreen) {
               mode.restoreFromFs();
             }
             wasFullscreen = isFs;
+            // 前台上下文:仅感知开启(脚本才返回进程名)且非全屏(桌宠已隐藏)时广播
+            if (!isFs && proc && proc !== 'unknown') {
+              const category = focus.classify(proc);
+              if (category !== lastContext) broadcastContext(category);
+            }
             scheduleFsCheck(isFs ? FS_CHECK_INTERVAL.fullscreen : FS_CHECK_INTERVAL.windowed);
           }
         } catch (e) {
@@ -295,7 +369,19 @@ if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
       }
     );
   }
-  scheduleFsCheck(2000); // 启动 2 秒后首查
+
+  // 前台感知开关联动:开=启动前台轮询;关=停止轮询、恢复可能被全屏隐藏的窗口
+  fgToggleHandler = () => {
+    if (mode.getForegroundAware()) {
+      if (!fsCheckTimer) scheduleFsCheck(500);
+    } else {
+      if (fsCheckTimer) { clearTimeout(fsCheckTimer); fsCheckTimer = null; }
+      if (wasFullscreen) { wasFullscreen = false; mode.restoreFromFs(); }
+      lastContext = null;
+    }
+  };
+
+  if (mode.getForegroundAware()) scheduleFsCheck(2000); // 启动 2 秒后首查(开关关闭则完全不读前台)
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束
