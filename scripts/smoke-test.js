@@ -262,6 +262,7 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   assert.ok(petUi.includes('applyPerception'), '鲸鱼娘缺少状态感知落地');
   assert.ok(petUi.includes('原地奔跑'), '移动动画应原地播放(已禁用自动移动)');
   assert.ok(petUi.includes('showBubble') && petUi.includes('DRINK_MSGS'), '鲸鱼娘缺少趣味气泡');
+  assert.ok(petUi.includes('ANIM_BUBBLES'), '鲸鱼娘缺少动作台词气泡');
   assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
   assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');
 });
