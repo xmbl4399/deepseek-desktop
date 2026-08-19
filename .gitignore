@@ -135,3 +135,5 @@ release/
 # DeepSeek 桌面助手调试日志(含滚动 .old)
 ds-debug.log*
 
+.git-commit-msg.txt
+
