@@ -10,7 +10,7 @@ function create({ log, state, actions }) {
     const currentMode = actions.getDisplayMode ? actions.getDisplayMode() : 'ball';
     log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart, 'displayMode =', currentMode);
     return Menu.buildFromTemplate([
-      { label: '打开 DS 窗口', click: actions.showMain },
+      { label: '打开主窗口', click: actions.showMain },
       { label: '打开对话浮窗', click: () => actions.togglePopup() },
       { label: '截图提问', click: actions.startScreenshot },
       { type: 'separator' },

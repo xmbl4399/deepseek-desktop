@@ -1,4 +1,4 @@
-// 显示模式管理:悬浮球(ball,默认) / 鲸鱼娘(pet) 二选一
+// 显示模式管理:悬浮球(ball) / 鲸鱼娘(pet,默认) 二选一
 // 状态记忆:userData/ds-settings.json 持久化,重启后保持上次模式
 // 全屏联动:全屏时隐藏当前模式窗口,退出全屏恢复(替换原 main.js 直操作 floatingWindow)
 // 切换策略:销毁旧窗口 → 创建新窗口,两种模式互不冲突、不并存
@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
 
-const DEFAULT_MODE = 'ball';
+const DEFAULT_MODE = 'pet';
 const SETTINGS_FILE = 'ds-settings.json';
 
 function create({ log, state, floating, pet }) {
