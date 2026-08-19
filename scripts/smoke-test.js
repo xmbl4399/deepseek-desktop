@@ -221,9 +221,8 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   // 悬浮球渲染层:拖拽走 IPC,不再依赖渲染进程 moveTo
   const uiFloating = read('ui/floating.js');
   assert.ok(uiFloating.includes("'ball-move'"), '悬浮球拖拽应走 ball-move IPC');
-  // 鲸鱼娘渲染层:移动方向按当前朝向(修复东张西望后反向行走)+ 跑步动画入池
+  // 鲸鱼娘渲染层:移动动画池(原地奔跑,自动移动已禁用)
   const petUi = read('ui/pet.js');
-  assert.ok(petUi.includes("const dir = facing === 'right' ? 1 : -1;"), '移动方向应按当前朝向(修复反向行走)');
   assert.ok(petUi.includes('原地左转奔跑'), '移动池应含跑步动画(原地左转奔跑)');
   // 右键菜单:显示模式三项(勾选高亮)+ 退出
   const menuHtml = read('ui/menu.html');
@@ -257,11 +256,11 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   // focus:进程名分类(含本应用 deepseek)
   assert.ok(focus.includes('function classify'), '缺少前台进程分类');
   assert.ok(focus.includes('deepseek'), '前台分类应识别本应用(deepseek)');
-  // 渲染层:鲸鱼娘订阅上下文(deepseek=工作动画)+ 走回初始位置;悬浮球订阅上下文徽标
+  // 渲染层:鲸鱼娘订阅上下文(deepseek=工作动画)+ 移动动画原地播放;悬浮球订阅上下文徽标
   assert.ok(petUi.includes("'pet-context'"), '鲸鱼娘未订阅前台上下文');
   assert.ok(petUi.includes('deepseek') && petUi.includes('setAnimLoop'), '鲸鱼娘缺少 deepseek 工作动画(循环)');
   assert.ok(petUi.includes('applyPerception'), '鲸鱼娘缺少状态感知落地');
-  assert.ok(petUi.includes('tryReturnHome') && petUi.includes('homeX'), '鲸鱼娘缺少走回初始位置逻辑');
+  assert.ok(petUi.includes('原地奔跑'), '移动动画应原地播放(已禁用自动移动)');
   assert.ok(petUi.includes('showBubble') && petUi.includes('DRINK_MSGS'), '鲸鱼娘缺少趣味气泡');
   assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
   assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');

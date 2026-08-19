@@ -111,14 +111,6 @@ function pickAct() {
   return pick(ACTS, anim);
 }
 
-// 移动参数(dsh-pet 原值)
-const MOVE_MIN_PX = 60;
-const MOVE_MAX_PX = 240;
-const MOVE_MARGIN = 20;
-const MOVE_LEAD_SEC = 2; // 动画开头 2s 准备动作,位置不动
-const MOVE_TAIL_SEC = 2; // 动画结尾 2s 收尾动作,位置不动
-
-const randomBetween = (min, max) => Math.floor(min + Math.random() * (max - min));
 const pick = (pool, exclude) => {
   const entries = exclude ? pool.filter((n) => n !== exclude) : pool;
   return entries[Math.floor(Math.random() * entries.length)];
@@ -264,22 +256,12 @@ api.on('pet-pos', (pos) => {
   if (pos.x !== winX || pos.y !== winY) {
     winX = pos.x;
     winY = pos.y;
-    // 首次拿到真实位置时记录"初始位置"(默认位或用户拖拽落点)
-    if (homeX === null) { homeX = winX + PET_W / 2; homeY = winY + PET_H / 2; dbg('home set', [homeX, homeY]); }
     dbg('pet-pos set', [winX, winY]);
   }
 });
 
-// ---------- 移动状态 ----------
+// ---------- 移动状态(已禁用自动移动:鲸鱼娘原地奔跑,不移动窗口;stopMove 仅作防御) ----------
 let moveRef = null;       // rAF id
-let moveToken = 0;        // 移动令牌(取消使旧回调失效)
-let pendingMove = null;   // 计划中的移动 {startX, targetX}
-
-// 初始位置(home):启动=默认位(右缘 1/3);拖拽落点后=用户放置位。
-// 空闲走动后尽快走回 home,避免鲸鱼娘长时间停在屏幕中间干扰用户。
-let homeX = null;
-let homeY = null;
-const RETURN_THRESHOLD = 200; // 距 home 超过该值(px)则优先走回
 
 // ---------- 视频资源路径 ----------
 function assetSrc(name) {
@@ -316,7 +298,6 @@ function switchTo(next, nextOnce) {
     // facing 镜像:新视频按当前朝向设置,旧视频保持自己的 transform 淡出
     el.style.transform = facing === 'right' ? 'scaleX(-1)' : '';
     el.play().catch(() => {});
-    if (pendingMove) startMoveDrive(el);
   };
   el.addEventListener('loadeddata', onReady);
   if (el.readyState >= 2) onReady();
@@ -333,17 +314,7 @@ function pickNext() {
   } else if (roll < 0.8) {
     next = pickAct();            // 40% 随机动作(按前台上下文加权)
   } else {
-    // 20% 移动:优先走回初始位置,其次按朝向漫游,空间不够回退动作
-    const ret = tryReturnHome();
-    if (ret === 'turn') {
-      next = TURN;             // 转向后再走回(下一轮 tryReturnHome 规划回家移动)
-    } else if (ret === 'move') {
-      next = pick(MOVES);
-    } else if (tryMove()) {
-      next = pick(MOVES);
-    } else {
-      next = pickAct();
-    }
+    next = pick(MOVES);          // 20% 移动动画(原地奔跑,不移动窗口)
   }
   setAnim(next);
 }
@@ -377,74 +348,8 @@ function setAnimLoop(next) {
   switchTo(anim, false);
 }
 
-// ---------- 移动系统(适配:窗口移动而非元素移动) ----------
-function tryMove() {
-  if (moveRef || pendingMove) return true; // 已在移动/已计划
-  // 方向始终按当前朝向。已像素级验证:所有移动动画(螃蟹走路/原地左转奔跑)未镜像时
-  // 本征方向均为左,与 facing 完全一致;移植版 facing 同步翻转,无需 TURN 取反。
-  const dir = facing === 'right' ? 1 : -1;
-  const cx = winX + PET_W / 2;
-  const distance = randomBetween(MOVE_MIN_PX, MOVE_MAX_PX);
-  const target = cx + dir * distance;
-  const availW = window.screen.availWidth;
-  const leftBound = MOVE_MARGIN + PET_W / 2;
-  const rightBound = availW - MOVE_MARGIN - PET_W / 2;
-  if (target < leftBound || target > rightBound) return false; // 空间不够
-  // 活动范围限制:以初始位置(home)为中心的带状区域,不深入屏幕中心
-  // (用户反馈:鲸鱼娘不应走到屏幕中间,应在初始位置附近小范围活动)
-  const hx = homeX !== null ? homeX : availW - PET_W / 2;
-  const WANDER = 600; // 单侧漫游半径(px)
-  if (target < hx - WANDER || target > hx + WANDER) return false; // 超范围:回退动作动画
-  pendingMove = { startX: cx, targetX: target };
-  return true;
-}
-
-// 走动后尽快走回初始位置(避免长时间停在屏幕中间干扰用户)
-// 返回:'move'=已规划回家移动 / 'turn'=先转向(东张西望播完翻转 facing)再走 / false=已在 home 附近
-function tryReturnHome() {
-  if (moveRef || pendingMove) return false;
-  if (homeX === null) return false;
-  const cx = winX + PET_W / 2;
-  if (Math.abs(homeX - cx) < RETURN_THRESHOLD) return false; // 已在初始位置附近
-  const dir = homeX > cx ? 1 : -1;          // 需要朝哪个方向走
-  const visDir = facing === 'right' ? 1 : -1; // 当前画面朝向
-  if (visDir !== dir) return 'turn';          // 朝向不一致:先转向,下一轮再走(保持画面方向与位移一致)
-  const distance = Math.min(Math.abs(homeX - cx), MOVE_MAX_PX);
-  pendingMove = { startX: cx, targetX: cx + dir * distance };
-  return 'move';
-}
-
-function startMoveDrive(el) {
-  if (!pendingMove || moveRef) return;
-  const pm = pendingMove;
-  pendingMove = null;
-  const duration = Number.isFinite(el.duration) && el.duration > 0 ? el.duration : 10;
-  const travelWindow = Math.max(0.1, duration - MOVE_LEAD_SEC - MOVE_TAIL_SEC);
-  const token = ++moveToken;
-  const step = () => {
-    if (moveToken !== token) return;
-    const t = el.currentTime || 0;
-    let x = pm.startX;
-    if (t > MOVE_LEAD_SEC && t < duration - MOVE_TAIL_SEC) {
-      x = pm.startX + (pm.targetX - pm.startX) * ((t - MOVE_LEAD_SEC) / travelWindow);
-    } else if (t >= duration - MOVE_TAIL_SEC) {
-      x = pm.targetX;
-    }
-    // 窗口移动:Y 保持贴底,只动 X(走主进程 setPosition,渲染进程 moveTo 无效)
-    winX = Math.round(x - PET_W / 2);
-    api.action('pet-move', { x: winX, y: winY, facing });
-    if (t < duration - MOVE_TAIL_SEC) {
-      moveRef = requestAnimationFrame(step);
-    } else {
-      moveRef = null;
-    }
-  };
-  moveRef = requestAnimationFrame(step);
-}
-
+// ---------- 移动(已禁用自动移动:移动动画原地播放,窗口不动) ----------
 function stopMove() {
-  pendingMove = null;
-  moveToken += 1;
   if (moveRef) {
     cancelAnimationFrame(moveRef);
     moveRef = null;
@@ -524,10 +429,6 @@ function onPointerUp(e) {
     clickBusy = false; // 拖拽结束解除点击回应忙碌
     if (clickBusyTimer) { clearTimeout(clickBusyTimer); clickBusyTimer = null; }
     setAnim(IDLE); // 回待机缓冲
-    // 用户放置处成为新的初始位置(之后空闲走动会走回这里)
-    homeX = winX + PET_W / 2;
-    homeY = winY + PET_H / 2;
-    dbg('home moved to', [homeX, homeY]);
     applyPerception(); // 拖拽结束恢复状态感知(生成中/出错/前台上下文)
   }
 }

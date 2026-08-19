@@ -1,0 +1,5 @@
+fix: 禁用鲸鱼娘自动移动,移动动画原地播放(v1.0.15)
+
+- 移除 tryMove/tryReturnHome/startMoveDrive/home 追踪,20% 移动分支原地播放(螃蟹走路/踏步/奔跑)
+- 鲸鱼娘固定在默认位(右缘垂直居中),不再漫游/走回
+- 更新 smoke-test 断言
