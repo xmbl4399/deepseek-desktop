@@ -11,6 +11,9 @@ const security = require('./modules/security').create({ log });
 const offline = require('./modules/offline').create({ log });
 const ballMenu = require('./modules/ball-menu').create({ log, state });
 const floating = require('./modules/floating').create({ log, state });
+const pet = require('./modules/pet').create({ log, state });
+// 显示模式协调(悬浮球/鲸鱼娘),依赖 floating + pet,须在两者之后装配
+const mode = require('./modules/mode').create({ log, state, floating, pet });
 // popup 的 onWindowCreated 延迟引用 shortcutsApi(shortcuts 依赖 actions,actions 依赖 popup,靠闭包解环)
 let shortcutsApi = null;
 const popup = require('./modules/popup').create({
@@ -125,8 +128,13 @@ function onUiAction(name, payload) {
     case 'ball-menu':
       ballMenu.showBallMenu(payload);
       break;
-    case 'toggle-ball':
-      floating.toggleFloating();
+    case 'toggle-mode':
+      // 右键菜单"切换显示模式":悬浮球 ↔ 鲸鱼娘 循环
+      mode.toggleMode();
+      break;
+    case 'pet-ignore':
+      // 鲸鱼娘命中检测结果 → 控制窗口点击穿透
+      pet.setIgnore(payload && payload.ignore);
       break;
     case 'overlay:ready':
       if (state.overlayWindow && !state.overlayWindow.isDestroyed() && state.pendingShot) {
@@ -167,8 +175,9 @@ const actions = {
   togglePopup: (text) => popup.togglePopup(text),
   hidePopup,
   startScreenshot: () => screenshot.startScreenshot(),
-  toggleFloating: () => floating.toggleFloating(),
   checkForUpdates: () => updater.checkForUpdates(),
+  setDisplayMode: (m) => mode.setDisplayMode(m),
+  getDisplayMode: () => mode.getDisplayMode(),
 };
 
 // 托盘与快捷键依赖 actions,须在 actions 定义后实例化
@@ -179,8 +188,9 @@ shortcutsApi = require('./modules/shortcuts').create({ log, state, actions });
 app.whenReady().then(() => {
   if (!gotLock) return; // 未拿到单实例锁,等待退出
 
+  mode.loadMode(); // 同步读持久化的显示模式(必须在建窗前)
   tray.createTray();
-  floating.createFloatingWindow();
+  mode.createActiveWindow(); // 按持久化模式建窗(默认悬浮球)
   updater.setupAutoUpdater();
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));
@@ -245,7 +255,6 @@ if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
     USERPROFILE: process.env.USERPROFILE || '',
   };
   let wasFullscreen = false;
-  let ballHiddenForFs = false;
   let fsCheckRunning = false; // 防止 PS 进程堆积
   let fsCheckTimer = null;
   const FS_CHECK_INTERVAL = { fullscreen: 800, windowed: 3000 }; // 全屏时高频,平时低频
@@ -267,14 +276,10 @@ if ($full) { Write-Output "FULLSCREEN" } else { Write-Output "WINDOWED" }
             log('[fullscreen] check failed:', err.message);
           } else {
             const isFs = /FULLSCREEN/.test(stdout || '');
-            if (isFs && !wasFullscreen && state.floatingWindow && !state.floatingWindow.isDestroyed() && state.floatingWindow.isVisible()) {
-              state.floatingWindow.hide();
-              ballHiddenForFs = true;
-              log('[fullscreen] detected, ball hidden');
-            } else if (!isFs && wasFullscreen && ballHiddenForFs && state.floatingWindow && !state.floatingWindow.isDestroyed()) {
-              state.floatingWindow.show();
-              ballHiddenForFs = false;
-              log('[fullscreen] exited, ball restored');
+            if (isFs && !wasFullscreen) {
+              mode.hideForFs(); // 隐藏当前显示模式窗口(悬浮球或鲸鱼娘)
+            } else if (!isFs && wasFullscreen) {
+              mode.restoreFromFs();
             }
             wasFullscreen = isFs;
             scheduleFsCheck(isFs ? FS_CHECK_INTERVAL.fullscreen : FS_CHECK_INTERVAL.windowed);

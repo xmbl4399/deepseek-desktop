@@ -7,12 +7,31 @@ const LOGO = path.join(__dirname, '..', 'ui', 'logo.png');
 function create({ log, state, actions }) {
   function buildAppMenu() {
     const autoStart = app.getLoginItemSettings().openAtLogin;
-    log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart);
+    const currentMode = actions.getDisplayMode ? actions.getDisplayMode() : 'ball';
+    log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart, 'displayMode =', currentMode);
     return Menu.buildFromTemplate([
       { label: '打开 DS 窗口', click: actions.showMain },
       { label: '打开对话浮窗', click: () => actions.togglePopup() },
       { label: '截图提问', click: actions.startScreenshot },
-      { label: '切换悬浮球', click: actions.toggleFloating },
+      { type: 'separator' },
+      {
+        label: '显示模式',
+        // radio 单选语义在这里正是想要的:悬浮球/鲸鱼娘二选一,当前模式勾选
+        submenu: [
+          {
+            label: '悬浮球',
+            type: 'radio',
+            checked: currentMode === 'ball',
+            click: () => actions.setDisplayMode('ball'),
+          },
+          {
+            label: '鲸鱼娘',
+            type: 'radio',
+            checked: currentMode === 'pet',
+            click: () => actions.setDisplayMode('pet'),
+          },
+        ],
+      },
       { type: 'separator' },
       {
         label: '检查更新…',

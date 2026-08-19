@@ -3,6 +3,7 @@ module.exports = {
   mainWindow: null,
   tray: null,
   floatingWindow: null,
+  petWindow: null,
   popupWindow: null,
   menuWindow: null,
   overlayWindow: null,

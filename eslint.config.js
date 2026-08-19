@@ -36,6 +36,8 @@ const browserGlobals = {
   Event: 'readonly',
   Image: 'readonly',
   getComputedStyle: 'readonly',
+  requestAnimationFrame: 'readonly',
+  cancelAnimationFrame: 'readonly',
 };
 
 module.exports = [
@@ -49,7 +51,7 @@ module.exports = [
   },
   {
     // 注入网页或本地 UI 的脚本:浏览器环境
-    files: ['inject.js', 'popup-inject.js', 'ui/floating.js', 'ui/menu.js', 'ui/overlay.js'],
+    files: ['inject.js', 'popup-inject.js', 'ui/floating.js', 'ui/menu.js', 'ui/overlay.js', 'ui/pet.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',

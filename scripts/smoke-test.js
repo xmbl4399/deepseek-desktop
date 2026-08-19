@@ -31,6 +31,9 @@ const REQUIRED_FILES = [
   'ui/ui.css',
   'ui/logo.png',
   'ui/offline.html',
+  'ui/pet.html',
+  'ui/pet.js',
+  'ui/pet-assets/待机呼吸休闲.webm',
   'modules/logger.js',
   'modules/state.js',
   'modules/security.js',
@@ -42,6 +45,8 @@ const REQUIRED_FILES = [
   'modules/tray.js',
   'modules/updater.js',
   'modules/shortcuts.js',
+  'modules/pet.js',
+  'modules/mode.js',
 ];
 
 test('关键文件存在', () => {
@@ -60,6 +65,7 @@ test('JS 语法检查(node --check)', () => {
     'ui/menu.js',
     'ui/overlay.js',
     'ui/preload-ui.js',
+    'ui/pet.js',
     'modules/logger.js',
     'modules/state.js',
     'modules/security.js',
@@ -71,6 +77,8 @@ test('JS 语法检查(node --check)', () => {
     'modules/tray.js',
     'modules/updater.js',
     'modules/shortcuts.js',
+    'modules/pet.js',
+    'modules/mode.js',
   ];
   for (const f of jsFiles) {
     execFileSync(NODE, ['--check', path.join(ROOT, f)], { stdio: 'pipe' });
@@ -128,10 +136,17 @@ test('内嵌全屏检测脚本与 check-fullscreen.ps1 保持同步', () => {
 
 test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/状态不过期)', () => {
   const tray = read('modules/tray.js');
-  assert.ok(!tray.includes("type: 'radio'"), '不应再使用 radio(单选语义关不掉开机启动)');
+  // radio 仅允许出现在"显示模式"子菜单(单选语义正确);开机启动区不得用 radio
+  const autoStartSeg = tray.split("label: '开机启动'")[1].split('});')[0];
+  assert.ok(!autoStartSeg.includes("type: 'radio'"), '开机启动不应使用 radio(单选语义关不掉)');
   assert.ok(tray.includes("type: 'checkbox'"), '开机启动应使用 checkbox');
   assert.ok(tray.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
   assert.ok(tray.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
+  // 显示模式子菜单:悬浮球/鲸鱼娘 radio 二选一
+  assert.ok(tray.includes("label: '显示模式'"), '托盘应提供显示模式子菜单');
+  assert.ok(tray.includes("label: '悬浮球'"), '显示模式子菜单缺少悬浮球项');
+  assert.ok(tray.includes("label: '鲸鱼娘'"), '显示模式子菜单缺少鲸鱼娘项');
+  assert.ok(tray.includes('setDisplayMode'), '显示模式切换应走 setDisplayMode');
 });
 
 test('安全加固:远程窗口启用 sandbox,外链走 http/https 白名单,拦截内网地址', () => {
@@ -145,10 +160,32 @@ test('安全加固:远程窗口启用 sandbox,外链走 http/https 白名单,拦
 });
 
 test('本地 UI 页面均带 CSP,离线兜底与快捷键模块存在', () => {
-  for (const f of ['ui/floating.html', 'ui/menu.html', 'ui/overlay.html', 'ui/offline.html']) {
+  for (const f of ['ui/floating.html', 'ui/menu.html', 'ui/overlay.html', 'ui/offline.html', 'ui/pet.html']) {
     assert.ok(read(f).includes('Content-Security-Policy'), `${f} 缺少 CSP`);
   }
   const shortcuts = read('modules/shortcuts.js');
   assert.ok(shortcuts.includes('before-input-event'), '快捷键应走窗口内 before-input-event');
   assert.ok(read('modules/offline.js').includes('attachOfflineFallback'), '离线兜底模块缺失');
+});
+
+test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
+  const mode = read('modules/mode.js');
+  const pet = read('modules/pet.js');
+  const main = read('main.js');
+  // mode 模块:状态记忆 + 切换 + 全屏联动 + 活动窗口
+  assert.ok(mode.includes('ds-settings.json'), '显示模式应持久化到 userData/ds-settings.json');
+  assert.ok(mode.includes('loadMode') && mode.includes('saveMode'), '缺少模式读写');
+  assert.ok(mode.includes('hideForFs') && mode.includes('restoreFromFs'), '缺少全屏联动');
+  assert.ok(mode.includes('toggleMode') && mode.includes('setDisplayMode'), '缺少模式切换');
+  assert.ok(mode.includes('getActiveWindow'), '缺少活动窗口查询(全屏检测依赖)');
+  // pet 模块:透明窗口 + 点击穿透
+  assert.ok(pet.includes('transparent: true'), '鲸鱼娘窗口应透明');
+  assert.ok(pet.includes('setIgnoreMouseEvents'), '鲸鱼娘窗口应支持点击穿透');
+  // 主进程装配
+  assert.ok(main.includes("require('./modules/mode')"), 'main.js 未装配 mode 模块');
+  assert.ok(main.includes("require('./modules/pet')"), 'main.js 未装配 pet 模块');
+  assert.ok(main.includes("mode.loadMode()"), '启动未读取持久化显示模式');
+  assert.ok(main.includes("mode.createActiveWindow()"), '启动未按模式建窗');
+  assert.ok(main.includes("case 'pet-ignore'"), '缺少 pet-ignore 动作(点击穿透)');
+  assert.ok(main.includes("case 'toggle-mode'"), '缺少 toggle-mode 动作(循环切换)');
 });

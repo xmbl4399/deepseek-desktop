@@ -53,6 +53,8 @@ const security = require(path.join(ROOT, 'modules', 'security')).create({ log })
 const offline = require(path.join(ROOT, 'modules', 'offline')).create({ log });
 const ballMenu = require(path.join(ROOT, 'modules', 'ball-menu')).create({ log, state });
 const floating = require(path.join(ROOT, 'modules', 'floating')).create({ log, state });
+const pet = require(path.join(ROOT, 'modules', 'pet')).create({ log, state });
+const mode = require(path.join(ROOT, 'modules', 'mode')).create({ log, state, floating, pet });
 const popup = require(path.join(ROOT, 'modules', 'popup')).create({
   log,
   state,
@@ -68,8 +70,9 @@ const actions = {
   togglePopup: () => {},
   hidePopup: () => {},
   startScreenshot: () => {},
-  toggleFloating: () => {},
   checkForUpdates: () => {},
+  setDisplayMode: () => {},
+  getDisplayMode: () => 'ball',
 };
 const tray = require(path.join(ROOT, 'modules', 'tray')).create({ log, state, actions });
 const shortcuts = require(path.join(ROOT, 'modules', 'shortcuts')).create({ log, state, actions });
@@ -80,6 +83,8 @@ const expectations = [
   ['offline', offline, ['attachOfflineFallback', 'waitLoadStop']],
   ['ball-menu', ballMenu, ['showBallMenu', 'closeMenuWindow']],
   ['floating', floating, ['createFloatingWindow', 'toggleFloating', 'clampBall']],
+  ['pet', pet, ['createPetWindow', 'destroyPetWindow', 'setIgnore']],
+  ['mode', mode, ['loadMode', 'createActiveWindow', 'getActiveWindow', 'getDisplayMode', 'setDisplayMode', 'toggleMode', 'hideForFs', 'restoreFromFs']],
   ['popup', popup, ['togglePopup', 'getPopupReady', 'injectToPopup']],
   ['screenshot', screenshot, ['startScreenshot', 'closeOverlay', 'handleCrop']],
   ['updater', updater, ['checkForUpdates', 'setupAutoUpdater']],
@@ -115,4 +120,4 @@ if (failed > 0) {
   console.error(`require-check: ${failed} 项失败`);
   process.exit(1);
 }
-console.log('require-check: 全部模块装配成功(9 个模块, API 表面完整)');
+console.log('require-check: 全部模块装配成功(11 个模块, API 表面完整)');
