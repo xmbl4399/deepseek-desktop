@@ -181,11 +181,16 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   // pet 模块:透明窗口 + 点击穿透
   assert.ok(pet.includes('transparent: true'), '鲸鱼娘窗口应透明');
   assert.ok(pet.includes('setIgnoreMouseEvents'), '鲸鱼娘窗口应支持点击穿透');
+  assert.ok(pet.includes('setInterval'), '鲸鱼娘应有轮询命中检测(鼠标静止也能命中)');
+  assert.ok(pet.includes('setDragLock'), '鲸鱼娘缺少拖拽锁');
+  assert.ok(pet.includes('moveWindow'), '鲸鱼娘缺少主进程移动方法');
+  assert.ok(pet.includes('screen.getCursorScreenPoint'), '应轮询光标位置做命中检测');
   // 主进程装配
   assert.ok(main.includes("require('./modules/mode')"), 'main.js 未装配 mode 模块');
   assert.ok(main.includes("require('./modules/pet')"), 'main.js 未装配 pet 模块');
   assert.ok(main.includes("mode.loadMode()"), '启动未读取持久化显示模式');
   assert.ok(main.includes("mode.createActiveWindow()"), '启动未按模式建窗');
-  assert.ok(main.includes("case 'pet-ignore'"), '缺少 pet-ignore 动作(点击穿透)');
+  assert.ok(main.includes("case 'pet-drag'"), '缺少 pet-drag 动作(拖拽锁)');
+  assert.ok(main.includes("case 'pet-move'"), '缺少 pet-move 动作(主进程移动)');
   assert.ok(main.includes("case 'toggle-mode'"), '缺少 toggle-mode 动作(循环切换)');
 });

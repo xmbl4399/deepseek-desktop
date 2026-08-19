@@ -83,7 +83,7 @@ const expectations = [
   ['offline', offline, ['attachOfflineFallback', 'waitLoadStop']],
   ['ball-menu', ballMenu, ['showBallMenu', 'closeMenuWindow']],
   ['floating', floating, ['createFloatingWindow', 'toggleFloating', 'clampBall']],
-  ['pet', pet, ['createPetWindow', 'destroyPetWindow', 'setIgnore']],
+  ['pet', pet, ['createPetWindow', 'destroyPetWindow', 'setIgnore', 'setDragLock', 'moveWindow']],
   ['mode', mode, ['loadMode', 'createActiveWindow', 'getActiveWindow', 'getDisplayMode', 'setDisplayMode', 'toggleMode', 'hideForFs', 'restoreFromFs']],
   ['popup', popup, ['togglePopup', 'getPopupReady', 'injectToPopup']],
   ['screenshot', screenshot, ['startScreenshot', 'closeOverlay', 'handleCrop']],

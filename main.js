@@ -132,9 +132,14 @@ function onUiAction(name, payload) {
       // 右键菜单"切换显示模式":悬浮球 ↔ 鲸鱼娘 循环
       mode.toggleMode();
       break;
-    case 'pet-ignore':
-      // 鲸鱼娘命中检测结果 → 控制窗口点击穿透
-      pet.setIgnore(payload && payload.ignore);
+    case 'pet-drag':
+      // 鲸鱼娘拖拽锁:拖拽期间强制穿透关闭,防快速甩动闪断
+      pet.setDragLock(payload && payload.lock);
+      break;
+    case 'pet-move':
+      // 鲸鱼娘移动:渲染进程计算目标坐标,主进程 setPosition 驱动
+      // (渲染进程 window.moveTo 无效,必须走主进程)
+      pet.moveWindow(payload && payload.x, payload && payload.y);
       break;
     case 'overlay:ready':
       if (state.overlayWindow && !state.overlayWindow.isDestroyed() && state.pendingShot) {

@@ -66,8 +66,19 @@ let facing = 'left';      // 朝向:left | right
 // ---------- 交互状态 ----------
 let drag = { active: false, dragging: false, sx: 0, sy: 0, offX: 0, offY: 0 };
 let justDragged = false;  // 拖拽结束抑制幽灵点击
-let ignoreOn = true;      // 当前是否点击穿透(初始 true)
 let clickTimer = null;
+
+// 窗口位置本地追踪:Electron 中渲染进程 window.moveTo 无效,移动全走主进程
+// setPosition(IPC pet-move),window.screenX 不会随主进程移动更新,故用本地值。
+let winX = 0;
+let winY = 0;
+api.on('pet-pos', (pos) => {
+  if (pos && typeof pos.x === 'number') {
+    winX = pos.x;
+    winY = pos.y;
+    dbg('pet-pos set', [winX, winY]);
+  }
+});
 
 // ---------- 移动状态 ----------
 let moveRef = null;       // rAF id
@@ -157,7 +168,7 @@ function tryMove() {
   if (moveRef || pendingMove) return true; // 已在移动/已计划
   // 方向按实际朝向;东张西望刚播完时 facing 即将翻转,方向取反
   const dir = (facing === 'right') !== (anim === TURN) ? 1 : -1;
-  const cx = window.screenX + PET_W / 2;
+  const cx = winX + PET_W / 2;
   const distance = randomBetween(MOVE_MIN_PX, MOVE_MAX_PX);
   const target = cx + dir * distance;
   const availW = window.screen.availWidth;
@@ -184,8 +195,9 @@ function startMoveDrive(el) {
     } else if (t >= duration - MOVE_TAIL_SEC) {
       x = pm.targetX;
     }
-    // 窗口移动:Y 保持贴底,只动 X
-    window.moveTo(Math.round(x - PET_W / 2), window.screenY);
+    // 窗口移动:Y 保持贴底,只动 X(走主进程 setPosition,渲染进程 moveTo 无效)
+    winX = Math.round(x - PET_W / 2);
+    api.action('pet-move', { x: winX, y: winY });
     if (t < duration - MOVE_TAIL_SEC) {
       moveRef = requestAnimationFrame(step);
     } else {
@@ -204,22 +216,41 @@ function stopMove() {
   }
 }
 
+// ---------- 点击穿透(改为主进程轮询命中检测) ----------
+// 主进程每 100ms 用 screen.getCursorScreenPoint() 判断光标是否在人物 HIT_BOX 内,
+// 在 → 关穿透正常交互;移出 → 开穿透直达下层。渲染进程不再做 mousemove 命中
+// (鼠标静止时无事件,穿透永远关不掉导致拖不动)。
+// 拖拽期间 pointerdown/up 通知主进程加/解锁,强制穿透关闭,防快速甩动闪断。
 // ---------- 点击 vs 拖拽(移植 dsh-pet:5px 阈值 + 按下点偏移 + 幽灵点击抑制) ----------
 const DRAG_THRESHOLD = 5;
 
+// 事件日志:记录鼠标事件是否真正到达渲染进程(穿透是否生效的关键证据)
+function evtLog(tag, e) {
+  dbg(`[pet-ev] ${tag}`, {
+    mouse: [e && e.screenX, e && e.screenY],
+    win: [winX, winY],
+    rel: [e && e.screenX - winX, e && e.screenY - winY],
+    dragging: drag.dragging,
+    active: drag.active,
+  });
+}
+
 function onPointerDown(e) {
   if (e.button !== 0) return;
+  evtLog('pointerdown', e);
   hit.classList.add('dragging');
   stopMove(); // 交互打断移动
   hit.setPointerCapture(e.pointerId);
+  // 拖拽锁:强制穿透关闭(否则 pointermove 可能因轮询误判中断)
+  api.action('pet-drag', { lock: true });
   // 记录鼠标点相对窗口中心的偏移:从人物任意位置抓起都不瞬移到鼠标下
   drag = {
     active: true,
     dragging: false,
     sx: e.screenX,
     sy: e.screenY,
-    offX: e.screenX - (window.screenX + PET_W / 2),
-    offY: e.screenY - (window.screenY + PET_H / 2),
+    offX: e.screenX - (winX + PET_W / 2),
+    offY: e.screenY - (winY + PET_H / 2),
   };
 }
 
@@ -231,43 +262,36 @@ function onPointerMove(e) {
   if (!d.dragging) {
     if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return; // 未超阈值:仍是点击候选
     d.dragging = true;
+    evtLog('drag-start', e);
     setAnim(DRAG); // 进入拖拽:播放拖拽动画
   }
-  // 跟手:窗口中心 = 鼠标点 - 按下偏移
-  window.moveTo(
-    Math.round(e.screenX - d.offX - PET_W / 2),
-    Math.round(e.screenY - d.offY - PET_H / 2)
-  );
-  clampWindow();
+  // 跟手:窗口中心 = 鼠标点 - 按下偏移(走主进程 setPosition)
+  winX = Math.round(e.screenX - d.offX - PET_W / 2);
+  winY = Math.round(e.screenY - d.offY - PET_H / 2);
+  api.action('pet-move', { x: winX, y: winY });
 }
 
-function onPointerUp() {
+function onPointerUp(e) {
   const d = drag;
   if (!d.active) return;
   const wasDragging = d.dragging;
+  evtLog(wasDragging ? 'pointerup-drag' : 'pointerup-click', e);
   d.active = false;
   d.dragging = false;
   hit.classList.remove('dragging');
+  // 解锁拖拽:恢复主进程轮询穿透(光标仍在人物上会立即关穿透,不影响后续点击)
+  api.action('pet-drag', { lock: false });
   if (wasDragging) {
     justDragged = true;
     setTimeout(() => { justDragged = false; }, 100); // 抑制拖拽后的幽灵点击
-    clampWindow();
     setAnim(IDLE); // 回待机缓冲
   }
 }
 
-// 窗口钳制在屏幕内(拖拽落点/移动共用)
-function clampWindow() {
-  const availW = window.screen.availWidth;
-  const availH = window.screen.availHeight;
-  const x = Math.min(Math.max(window.screenX, 0), availW - PET_W);
-  const y = Math.min(Math.max(window.screenY, 0), availH - PET_H);
-  if (x !== window.screenX || y !== window.screenY) window.moveTo(x, y);
-}
-
 // ---------- 单击/双击/右键 ----------
 // 单击:点击回应动画;双击:toggle 主窗口(240ms 内二次 click 判定为双击)
-function onClick() {
+function onClick(e) {
+  evtLog('click', e);
   if (justDragged) return;
   if (clickTimer) {
     clearTimeout(clickTimer);
@@ -284,30 +308,7 @@ function onClick() {
 
 hit.addEventListener('contextmenu', (e) => {
   e.preventDefault();
-  api.action('ball-menu', { wx: window.screenX, wy: window.screenY, mx: e.screenX, my: e.screenY });
-});
-
-// ---------- 点击穿透(HIT_BOX 命中检测) ----------
-// 初始全穿透;forward mousemove 在窗口矩形内仍转发,据此判断鼠标是否进入人物区域。
-// 交互进行中(drag.active/justDragged)强制保持穿透关闭,避免拖拽被穿透打断。
-function setIgnore(ignore) {
-  if (ignoreOn === ignore) return;
-  ignoreOn = ignore;
-  api.action('pet-ignore', { ignore });
-}
-
-window.addEventListener('mousemove', (e) => {
-  if (drag.active || justDragged) return; // 交互中:保持穿透关闭
-  const px = e.screenX - window.screenX;
-  const py = e.screenY - window.screenY;
-  const inside = px >= HIT.x && px <= HIT.x + HIT.w && py >= HIT.y && py <= HIT.y + HIT.h;
-  setIgnore(!inside); // 在人物内→关穿透;透明区→开穿透
-});
-
-// 鼠标移出窗口:确保恢复穿透
-window.addEventListener('mouseleave', () => {
-  if (drag.active || justDragged) return;
-  setIgnore(true);
+  api.action('ball-menu', { wx: winX, wy: winY, mx: e.screenX, my: e.screenY });
 });
 
 // ---------- 事件绑定 ----------
@@ -324,8 +325,7 @@ hit.style.left = HIT.x + 'px';
 hit.style.top = HIT.y + 'px';
 hit.style.width = HIT.w + 'px';
 hit.style.height = HIT.h + 'px';
-// 初始全穿透(等待鼠标进入)
-setIgnore(true);
+// 穿透由主进程轮询控制,渲染进程无需初始设置
 
 setAnim(IDLE); // 首次加载即播待机
-dbg('pet init', { HIT, bottomPad, screen: { w: window.screen.availWidth, h: window.screen.availHeight }, pos: [window.screenX, window.screenY] });
+dbg('pet init', { HIT, bottomPad, screen: { w: window.screen.availWidth, h: window.screen.availHeight }, pos: [winX, winY] });
