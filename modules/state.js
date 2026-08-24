@@ -4,9 +4,7 @@ module.exports = {
   tray: null,
   floatingWindow: null,
   petWindow: null,
-  popupWindow: null,
   menuWindow: null,
   overlayWindow: null,
   pendingShot: null,
-  pendingPopupText: null,
 };

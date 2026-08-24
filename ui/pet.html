@@ -20,6 +20,18 @@
     #hit.dragging { cursor: grabbing; }
     /* 趣味气泡(抄 dsh-dafeiyu 的气泡思路:轻量文字气泡,悬在头顶)
        尺寸随鲸鱼娘缩放:字号由 JS 按 PET_W/320 设置,其余用 em 自动跟随 */
+    :root {
+      --bubble-bg: rgba(24, 26, 38, 0.94);
+      --bubble-border: rgba(255, 255, 255, 0.12);
+      --bubble-fg: #e8eaf6;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bubble-bg: rgba(250, 250, 253, 0.95);
+        --bubble-border: rgba(0, 0, 0, 0.12);
+        --bubble-fg: #2b3045;
+      }
+    }
     #bubble {
       position: absolute;
       top: 0.17em;
@@ -28,9 +40,9 @@
       max-width: 82%;
       padding: 0.42em 0.92em;
       border-radius: 0.83em;
-      background: rgba(24, 26, 38, 0.94);
-      border: 0.08em solid rgba(255, 255, 255, 0.12);
-      color: #e8eaf6;
+      background: var(--bubble-bg);
+      border: 0.08em solid var(--bubble-border);
+      color: var(--bubble-fg);
       font-size: 12px; /* JS 按窗口尺寸缩放 */
       line-height: 1.4;
       text-align: center;
@@ -49,14 +61,46 @@
       left: 50%;
       transform: translateX(-50%);
       border: 0.42em solid transparent;
-      border-top-color: rgba(24, 26, 38, 0.94);
+      border-top-color: var(--bubble-bg);
       border-bottom: none;
+    }
+    /* 背景光环(提升可视度):柔光径向渐变 ≈ 高斯模糊光晕,主题自适应;
+       位置/尺寸由 JS 按人物 HIT 区设置(applySize) */
+    :root {
+      --halo-color: rgba(46, 58, 110, 0.5);
+      --shadow-color: rgba(0, 0, 0, 0.35);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --halo-color: rgba(255, 255, 255, 0.55);
+        --shadow-color: rgba(0, 0, 0, 0.18);
+      }
+    }
+    #halo {
+      position: absolute;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(circle, var(--halo-color) 0%, transparent 70%);
+      transform: translate(-50%, -50%);
+    }
+    /* 脚下阴影(落地感) */
+    #shadow {
+      position: absolute;
+      left: 50%;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 0;
+      background: radial-gradient(ellipse at center, var(--shadow-color) 0%, transparent 70%);
+      transform: translateX(-50%);
     }
     @media (prefers-reduced-motion: reduce) { video.pv { transition: none; } }
   </style>
 </head>
 <body>
   <div id="stage">
+    <div id="halo"></div>
+    <div id="shadow"></div>
     <video id="va" class="pv is-front" muted playsinline autoplay title="鲸鱼娘"></video>
     <video id="vb" class="pv" muted playsinline autoplay title="鲸鱼娘"></video>
     <div id="bubble"></div>

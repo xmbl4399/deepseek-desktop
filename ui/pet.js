@@ -57,6 +57,15 @@ function applySize() {
   // 气泡随鲸鱼娘大小缩放:12px @ 320 宽为基准
   const bubbleScale = PET_W / 320;
   bubbleEl.style.fontSize = Math.max(9, Math.round(12 * bubbleScale)) + 'px';
+  // 背景光环:以人物中心为圆心,直径 ≈ 人物宽的 2.4 倍
+  haloEl.style.left = (HIT.x + HIT.w / 2) + 'px';
+  haloEl.style.top = (HIT.y + HIT.h / 2) + 'px';
+  haloEl.style.width = (HIT.w * 2.4) + 'px';
+  haloEl.style.height = (HIT.w * 2.4) + 'px';
+  // 脚下阴影:人物脚底处椭圆,宽 ≈ 人物宽的 1.4 倍
+  shadowEl.style.top = (HIT.y + HIT.h - HIT.h * 0.06) + 'px';
+  shadowEl.style.width = (HIT.w * 1.4) + 'px';
+  shadowEl.style.height = (HIT.h * 0.12) + 'px';
 }
 
 // ---------- 动画目录(全量 51 个素材) ----------
@@ -131,14 +140,59 @@ let clickTimer = null;
 
 // ---------- 趣味气泡(抄 dsh-dafeiyu 的气泡思路:轻量文字气泡,定时/事件触发) ----------
 const bubbleEl = document.getElementById('bubble');
+const haloEl = document.getElementById('halo');
+const shadowEl = document.getElementById('shadow');
 let bubbleTimer = null;
-function showBubble(text, ms) {
+// 气泡冷却(借鉴 zealot00/dsh-pet 的提醒互斥):10s 内不连发,防通知轰炸;
+// 重要气泡(欢迎/喝水/久坐/饭点/夜间)传 force=true 绕过冷却,不被台词气泡抢占
+const BUBBLE_COOLDOWN_MS = 10000;
+let lastBubbleAt = 0;
+function showBubble(text, ms, force) {
   if (!text || !bubbleEl) return;
+  const now = Date.now();
+  if (!force && now - lastBubbleAt < BUBBLE_COOLDOWN_MS) return; // 冷却期内跳过
+  lastBubbleAt = now;
   bubbleEl.textContent = text;
   bubbleEl.classList.add('show');
   if (bubbleTimer) clearTimeout(bubbleTimer);
   bubbleTimer = setTimeout(() => bubbleEl.classList.remove('show'), ms || 3500);
 }
+
+// ---------- 入睡机制(借鉴 zealot00/dsh-pet):交互闲置一段时间自动入睡,点击/拖拽/状态变化唤醒 ----------
+const SLEEP_AFTER_MS = 60 * 1000; // 闲置 60s 入睡
+const SLEEP_CHECK_MS = 5000;      // 每 5s 检查一次
+const SLEEP_ANIM = '原地小憩沉眠';
+let sleeping = false;
+let lastInteractAt = Date.now();
+
+function noteInteraction() {
+  lastInteractAt = Date.now();
+  wakeUp();
+}
+
+function goSleep() {
+  if (sleeping) return;
+  if (drag.active) return;                 // 拖拽中不睡
+  if (contextCategory === 'deepseek') return; // 焦点在 DeepSeek(工作)不睡
+  sleeping = true;
+  stopMove();
+  setAnimLoop(SLEEP_ANIM); // 循环睡眠动画,直到被交互唤醒
+  dbg('sleep zzz');
+}
+
+function wakeUp() {
+  if (!sleeping) return;
+  sleeping = false;
+  if (clickBusyTimer) { clearTimeout(clickBusyTimer); clickBusyTimer = null; }
+  clickBusy = false;
+  setAnim(IDLE);
+  applyPerception(); // 唤醒后恢复状态感知
+  dbg('wake up');
+}
+
+setInterval(() => {
+  if (!sleeping && Date.now() - lastInteractAt > SLEEP_AFTER_MS) goSleep();
+}, SLEEP_CHECK_MS);
 
 const GREETINGS = ['你好呀~', '我在这儿哦~', '今天也要加油鸭!', '来啦来啦~'];
 const DRINK_MSGS = ['该喝水啦~', '喝口水休息一下吧~', '水水时间到~'];
@@ -149,14 +203,14 @@ const QUIPS = ['发呆中…', '好无聊呀~', '偷偷看你~', '今天天气�
 
 const MIN = 60 * 1000;
 
-// 启动问好
-setTimeout(() => showBubble(pick(GREETINGS)), 2500);
+// 启动问好(force:不被台词气泡冷却抢占)
+setTimeout(() => showBubble(pick(GREETINGS), 0, true), 2500);
 
-// 喝水提醒:每 45 分钟
-setInterval(() => showBubble(pick(DRINK_MSGS)), 45 * MIN);
+// 喝水提醒:每 45 分钟(force)
+setInterval(() => showBubble(pick(DRINK_MSGS), 0, true), 45 * MIN);
 
-// 久坐活动提醒:每 30 分钟
-setInterval(() => showBubble(pick(MOVE_MSGS)), 30 * MIN);
+// 久坐活动提醒:每 30 分钟(force)
+setInterval(() => showBubble(pick(MOVE_MSGS), 0, true), 30 * MIN);
 
 // 饭点提醒(饭点前 15 分钟,每天各一次)与夜间休息提醒(23:00 后一次)
 const MEAL_TIMES = [
@@ -177,17 +231,17 @@ setInterval(() => {
   for (const t of MEAL_TIMES) {
     if (minutes >= t.m - MEAL_WINDOW_MIN && minutes < t.m && !remindedMeals.has(t.label)) {
       remindedMeals.add(t.label);
-      showBubble(pick(MEAL_MSGS));
+      showBubble(pick(MEAL_MSGS), 0, true);
       break;
     }
   }
   if (!nightReminded && now.getHours() >= NIGHT_HOUR) {
     nightReminded = true;
-    showBubble(pick(NIGHT_MSGS));
+    showBubble(pick(NIGHT_MSGS), 0, true);
   }
 }, MIN); // 每分钟检查一次时间窗口
 
-// 偶尔随机小感叹(每 6 分钟 30% 概率)
+// 偶尔随机小感叹(每 6 分钟 30% 概率,受冷却节制)
 setInterval(() => {
   if (Math.random() < 0.3) showBubble(pick(QUIPS));
 }, 6 * MIN);
@@ -218,8 +272,10 @@ api.on('pet-context', (c) => {
   applyPerception();
 });
 
-// 状态感知落地:拖拽/点击中不打断;焦点在 DeepSeek 用循环"忙碌"动画,其余用一次性上下文动画
+// 状态感知落地:拖拽/点击中不打断;睡眠中不响应(感知不唤醒睡眠,仅交互唤醒);
+// 焦点在 DeepSeek 用循环"忙碌"动画,其余用一次性上下文动画
 function applyPerception() {
+  if (sleeping) return; // 睡眠中:焦点/上下文变化不接管(不唤醒、不覆盖睡眠动画)
   if (drag.active) return; // 拖拽/点击中不打断
   stopMove(); // 打断自动移动
   dbg('perception ->', contextCategory, 'anim=', anim, 'once=', once);
@@ -321,6 +377,8 @@ function pickNext() {
 
 function handleEnded() {
   if (drag.active) return; // 拖拽中不打断
+  // 睡眠中:旧动画(交叉淡入前的)ended 会迟到触发,必须忽略,否则动画链会覆盖睡眠
+  if (sleeping) return;
   if (anim === TURN) {
     facing = facing === 'left' ? 'right' : 'left'; // 转向播完翻转朝向
   }
@@ -440,6 +498,7 @@ function evtLog(tag, e) {
 function onPointerDown(e) {
   if (e.button !== 0) return;
   evtLog('pointerdown', e);
+  noteInteraction(); // 交互=唤醒+刷新闲置计时
   hit.classList.add('dragging');
   stopMove(); // 交互打断移动
   hit.setPointerCapture(e.pointerId);
@@ -497,17 +556,18 @@ function onPointerUp(e) {
 
 // ---------- 单击/双击/右键 ----------
 // 单击:点击回应动画(任何时刻都响应,但回应前 3s 内不重复打断,之后可再点);
-// 双击:打开对话浮窗(与悬浮球统一,240ms 内二次 click 判定为双击)
+// 双击:打开/关闭主窗口(240ms 内二次 click 判定为双击)
 const CLICK_FREEZE_MS = 3000; // 点击回应开始后的冻结时长(只冻结前 3s,避免动画全程锁死)
 let clickBusy = false;        // 冻结期内:单击不重复播放
 let clickBusyTimer = null;    // 冻结计时
 function onClick(e) {
   evtLog('click', e);
   if (justDragged) return;
+  noteInteraction(); // 点击=唤醒+刷新闲置计时
   if (clickTimer) {
     clearTimeout(clickTimer);
     clickTimer = null;
-    api.action('popup'); // 双击:打开对话浮窗
+    api.action('toggle-main'); // 双击:打开/关闭主窗口
     return;
   }
   clickTimer = setTimeout(() => {

@@ -1,16 +1,18 @@
-// 选区截图:desktopCapturer 抓鼠标所在显示器 → 遮罩窗口框选 → 裁剪注入浮窗
-const { BrowserWindow, desktopCapturer, screen, app } = require('electron');
+// 选区截图提问:desktopCapturer 抓鼠标所在显示器 → 遮罩窗口框选 → 裁剪入剪贴板
+// → 打开主窗口并新建标签,聚焦输入框后 webContents.paste() 直接粘贴到新对话
+// (恢复自 v1.0.16 的 overlay 框选流程;裁剪在 overlay 渲染层按原图像素换算)
+const { BrowserWindow, desktopCapturer, screen, clipboard, nativeImage } = require('electron');
 const path = require('path');
-const fs = require('fs');
 
 const OVERLAY_PAGE = path.join(__dirname, '..', 'ui', 'overlay.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
-function create({ log, state, floating, popup }) {
+function create({ log, state }) {
   async function startScreenshot() {
     if (state.overlayWindow && !state.overlayWindow.isDestroyed()) return;
-    // 隐藏悬浮球,避免拍进截图
+    // 隐藏桌宠,避免拍进截图(悬浮球/鲸鱼娘都可能在前台)
     if (state.floatingWindow && !state.floatingWindow.isDestroyed()) state.floatingWindow.hide();
+    if (state.petWindow && !state.petWindow.isDestroyed()) state.petWindow.hide();
 
     try {
       // 截鼠标所在显示器(支持多屏)。用整个屏幕 bounds 而非 workArea:
@@ -30,9 +32,14 @@ function create({ log, state, floating, popup }) {
       state.pendingShot = { dataUrl: src.thumbnail.toDataURL(), area: bounds };
       createOverlay(bounds);
     } catch (err) {
-      log('[ds] screenshot failed:', err.message);
-      floating.restoreFloating();
+      log('[screenshot] capture failed:', err.message);
+      restorePets();
     }
+  }
+
+  function restorePets() {
+    if (state.floatingWindow && !state.floatingWindow.isDestroyed()) state.floatingWindow.show();
+    if (state.petWindow && !state.petWindow.isDestroyed()) state.petWindow.show();
   }
 
   function createOverlay(area) {
@@ -59,7 +66,7 @@ function create({ log, state, floating, popup }) {
     state.overlayWindow.on('closed', () => {
       state.overlayWindow = null;
       state.pendingShot = null;
-      floating.restoreFloating();
+      restorePets();
     });
   }
 
@@ -67,13 +74,13 @@ function create({ log, state, floating, popup }) {
     if (state.overlayWindow && !state.overlayWindow.isDestroyed()) state.overlayWindow.close();
   }
 
+  // 裁剪完成:入剪贴板(供粘贴);后续"打开主窗 + 新标签 + 自动粘贴"由调用方驱动
   function handleCrop({ dataUrl }) {
-    const file = path.join(app.getPath('temp'), 'ds-screenshot.png');
-    const b64 = String(dataUrl).replace(/^data:image\/png;base64,/, '');
-    fs.writeFileSync(file, Buffer.from(b64, 'base64'));
-    log('[ds] screenshot saved:', file, fs.statSync(file).size, 'bytes');
+    if (!dataUrl) return false;
+    clipboard.writeImage(nativeImage.createFromDataURL(dataUrl));
+    log('[screenshot] cropped -> clipboard');
     closeOverlay();
-    popup.injectToPopup(file); // 注入到对话浮框:图片上传预览,等待用户输入后自行发送
+    return true;
   }
 
   return { startScreenshot, closeOverlay, handleCrop };

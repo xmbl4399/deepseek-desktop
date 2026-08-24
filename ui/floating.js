@@ -62,7 +62,7 @@ api.on('pet-context', (c) => {
 });
 
 // ---------- 球体事件 ----------
-// 单击 → 打开主窗口(切换显示/隐藏);双击 → 打开对话浮窗(与鲸鱼娘统一)
+// 单击 → 打开主窗口(切换显示/隐藏);双击 → 同样开关主窗口
 ball.addEventListener('click', (e) => {
   dbg('click', { moved });
   if (moved) { moved = false; return; }
@@ -70,12 +70,12 @@ ball.addEventListener('click', (e) => {
   clickTimer = setTimeout(() => api.action('toggle-main'), 240);
 });
 
-// 双击 → 打开对话浮窗
+// 双击 → 打开/关闭主窗口
 ball.addEventListener('dblclick', () => {
   dbg('dblclick');
   if (clickTimer) clearTimeout(clickTimer);
   clickTimer = null;
-  api.action('popup');
+  api.action('toggle-main');
 });
 
 // 右键 → 自绘菜单

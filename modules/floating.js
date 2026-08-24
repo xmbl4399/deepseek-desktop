@@ -3,12 +3,12 @@
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
-const BALL_SIZE = 46; // 中档(默认)
+const BALL_SIZE = 48; // 中档(默认)
 const FLOATING_PAGE = path.join(__dirname, '..', 'ui', 'floating.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
-// 三档尺寸表(纯函数,便于测试):小/中/大
-const WIDGET_BALL_SIZES = { small: 40, medium: 46, large: 70 };
+// 三档尺寸表(纯函数,便于测试):小/中/大(桌面小圆点,2-3% 屏宽)
+const WIDGET_BALL_SIZES = { small: 40, medium: 48, large: 56 };
 function widgetBallSize(level) {
   return WIDGET_BALL_SIZES[level] || BALL_SIZE;
 }

@@ -1,7 +1,7 @@
 // DeepSeek 桌面助手 - 主进程(组装层)
-// 功能模块见 modules/ 目录:logger/state/security/offline/ball-menu/floating/popup/screenshot/tray/updater/shortcuts
-// 本文件保留:单实例锁、主窗口、UI 动作分发、全屏检测、生命周期
-const { app, BrowserWindow, ipcMain } = require('electron');
+// 功能模块见 modules/ 目录:logger/state/security/offline/ball-menu/floating/tray/updater/shortcuts
+// 本文件保留:单实例锁、主窗口(多标签壳)、UI 动作分发、全屏检测、生命周期
+const { app, BrowserWindow, ipcMain, screen, dialog, clipboard } = require('electron');
 const path = require('path');
 
 // ---------------- 模块装配 ----------------
@@ -28,16 +28,8 @@ const pet = require('./modules/pet').create({ log, state, onWindowLoaded: resend
 const mode = require('./modules/mode').create({ log, state, floating, pet });
 // 前台程序分类(前台感知开关开启时:焦点在 DeepSeek 触发工作动画,其余按程序类型适配)
 const focus = require('./modules/focus');
-// popup 的 onWindowCreated 延迟引用 shortcutsApi(shortcuts 依赖 actions,actions 依赖 popup,靠闭包解环)
 let shortcutsApi = null;
-const popup = require('./modules/popup').create({
-  log,
-  state,
-  security,
-  offline,
-  onWindowCreated: (win) => shortcutsApi && shortcutsApi.register(win),
-});
-const screenshot = require('./modules/screenshot').create({ log, state, floating, popup });
+const screenshot = require('./modules/screenshot').create({ log, state });
 const updater = require('./modules/updater').create({ log });
 
 // ---------------- 单实例锁:防止双开(开机自启 + 手动双击会启动两个实例,托盘/悬浮球互相打架) ----------------
@@ -57,37 +49,65 @@ if (!gotLock) {
 
 // ---------------- 兜底崩溃日志:主进程异常不再静默,方便远程排查 ----------------
 process.on('uncaughtException', (err) => log('[crash] uncaughtException:', (err && err.stack) || err));
-process.on('unhandledRejection', (reason) => log('[crash] unhandledRejection:', reason));
+process.on('unhandledRejection', (reason) => {
+  // Error 对象 JSON 序列化是 {},需展开 message/stack 才能定位
+  log('[crash] unhandledRejection:', reason && reason.message ? reason.message : reason, reason && reason.stack ? '\n' + reason.stack : '');
+});
 
 // 本地 UI 页面的调试日志转发
 ipcMain.on('ui:log', (_e, ...args) => log('[ui]', ...args));
 
-const APP_URL = 'https://chat.deepseek.com/';
+// ---------------- 主窗口(多标签壳) ----------------
+const MAIN_PAGE = path.join(__dirname, 'ui', 'main.html');
+const UI_PRELOAD = path.join(__dirname, 'ui', 'preload-ui.js');
 
-// ---------------- 主窗口 ----------------
+// 主窗尺寸按"尺寸档位"对应分辨率区间:小=720p、中=1080p/1440p、大=2160p+
+// (与悬浮球/鲸鱼娘的 小/中/大 档位联动,调整任一侧都同步)
+function mainSizeFor(tier, availW) {
+  if (tier === 'small') return { w: 800, h: 600 };
+  if (tier === 'large') return { w: 1280, h: 960 };
+  return availW <= 2400 ? { w: 960, h: 720 } : { w: 1120, h: 840 }; // medium:1080p / 1440p
+}
+
 function createMainWindow() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  const sz = mainSizeFor(mode.getWidgetSize(), wa.width);
+  const MAIN_W = sz.w;
+  const MAIN_H = sz.h;
   state.mainWindow = new BrowserWindow({
-    width: 768,
-    height: 576,
-    minWidth: 640,
-    minHeight: 480,
+    width: MAIN_W,
+    height: MAIN_H,
+    // 默认位:屏幕居中(水平+垂直)
+    x: wa.x + Math.round(wa.width / 2) - Math.round(MAIN_W / 2),
+    y: wa.y + Math.round(wa.height / 2) - Math.round(MAIN_H / 2),
+    minWidth: 480,
+    minHeight: 360,
     icon: path.join(__dirname, 'ui', 'logo.png'),
     show: false,
     autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
-      // 主窗口只加载远程页面,不需要任何本地 preload API
+      // 多标签壳:本地页面 + webview;webview 内容自带隔离,壳无需 sandbox
+      sandbox: false,
+      webviewTag: true,
+      preload: UI_PRELOAD,
     },
   });
 
-  security.attachNavigationGuard(state.mainWindow, 'main');
-  offline.attachOfflineFallback(state.mainWindow, 'main');
-  shortcutsApi && shortcutsApi.register(state.mainWindow);
+  // webview 安全:只允许附加 chat.deepseek.com(防恶意页面塞任意 webview)
+  state.mainWindow.webContents.on('will-attach-webview', (event, _webPreferences, params) => {
+    if (!params.src || !params.src.startsWith(security.APP_ORIGIN)) {
+      log('[security] blocked webview attach:', params.src);
+      event.preventDefault();
+    }
+  });
 
-  state.mainWindow.loadURL(APP_URL);
+  state.mainWindow.loadFile(MAIN_PAGE);
   state.mainWindow.once('ready-to-show', () => state.mainWindow.show());
+  shortcutsApi && shortcutsApi.register(state.mainWindow); // 壳层快捷键(tabs:action 发往壳)
+  // 壳加载完成后下发主窗置顶状态(置顶按钮初始态)
+  state.mainWindow.webContents.once('did-finish-load', () => broadcastMainTop());
 
   // 关闭按钮 → 隐藏到托盘,而非退出
   state.mainWindow.on('close', (e) => {
@@ -96,6 +116,138 @@ function createMainWindow() {
       state.mainWindow.hide();
     }
   });
+}
+
+// 尺寸档位变化 → 主窗口同步档位尺寸(仅 setBounds 缩放,保留标签页与位置;
+// 不销毁重建——销毁会丢失所有打开标签,视觉效果相同)
+function resizeMainWindow() {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+  const wa = screen.getPrimaryDisplay().workArea;
+  const sz = mainSizeFor(mode.getWidgetSize(), wa.width);
+  const b = state.mainWindow.getBounds();
+  state.mainWindow.setBounds({ x: b.x, y: b.y, width: sz.w, height: sz.h });
+  log('[main] resized to', sz.w + 'x' + sz.h);
+}
+
+// 主窗置顶状态广播给壳渲染层(置顶按钮高亮)
+function broadcastMainTop() {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+  try {
+    state.mainWindow.webContents.send('main-top', { on: mode.getMainOnTop() });
+  } catch (e) { /* ignore */ }
+}
+
+// 向主窗壳发送消息;壳未加载完则等 did-finish-load 后补发
+function sendToShell(channel, payload) {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) showMain();
+  const wc = state.mainWindow && state.mainWindow.webContents;
+  if (!wc) return;
+  if (wc.isLoading()) {
+    log('[ss] sendToShell', channel, '-> wait did-finish-load');
+    wc.once('did-finish-load', () => {
+      log('[ss] sendToShell', channel, '-> sent after load');
+      try { wc.send(channel, payload); } catch (e) { /* ignore */ }
+    });
+  } else {
+    log('[ss] sendToShell', channel, '-> sent now');
+    try { wc.send(channel, payload); } catch (e) { /* ignore */ }
+  }
+}
+
+function shellToast(text) {
+  sendToShell('toast', { text });
+}
+
+// 截图完成 → 打开主窗 → 壳在当前(活动)标签执行粘贴(不新建标签,避免标签混乱)
+function pasteScreenshotToNewTab() {
+  log('[ss] pasteScreenshotToNewTab (active tab)');
+  showMain();
+  sendToShell('screenshot-paste', {});
+}
+
+// 当前(活动)标签就绪:JS 注入粘贴剪贴板截图(不依赖 webContents.paste()/窗口帧焦点,
+// 最小化/未交互过的主窗也能粘贴;输入框异步渲染时重试 ~20s)
+function pasteToActiveWebview(wcId) {
+  const wc = wcId ? webviewWcs.get(wcId) : null;
+  if (!wc || wc.isDestroyed()) {
+    log('[ss] paste: no webview for id', wcId);
+    shellToast('截图已复制,请到输入框手动 Ctrl+V 粘贴');
+    return;
+  }
+  const img = clipboard.readImage();
+  if (img.isEmpty()) {
+    log('[ss] paste: clipboard image empty');
+    shellToast('剪贴板没有图片,请重新截图');
+    return;
+  }
+  const dataUrl = img.toDataURL();
+  // 在页面内:找输入框 → 聚焦 → 构造 ClipboardEvent('paste') 派发图片 File
+  // (base64 用 atob 解码,避免 fetch(data:) 受页面 CSP 限制)
+  const pasteScript = `(() => {
+    const cands = [
+      'textarea',
+      '[contenteditable="true"]',
+      'div[role="textbox"]',
+      '[data-testid="chat-input"]',
+      'input[type="text"]',
+      'input:not([type])',
+    ];
+    let el = null;
+    for (const s of cands) {
+      const e = document.querySelector(s);
+      if (!e) continue;
+      const editable = e.tagName === 'TEXTAREA' || e.tagName === 'INPUT'
+        || e.isContentEditable || e.getAttribute('contenteditable') !== null;
+      if (editable) { el = e; break; }
+    }
+    if (!el) return 'not-found';
+    el.focus();
+    try {
+      const b64 = ${JSON.stringify(dataUrl)}.split(',')[1] || '';
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const dt = new DataTransfer();
+      dt.items.add(new File([bytes], 'screenshot.png', { type: 'image/png' }));
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      return 'ok';
+    } catch (e) {
+      return 'dispatch-fail:' + (e && e.message);
+    }
+  })()`;
+  let tries = 0;
+  const MAX_TRIES = 30; // ~20s(输入框在页面加载完成后异步渲染)
+  const attempt = () => {
+    if (tries++ > MAX_TRIES) {
+      log('[ss] paste: input not found after', MAX_TRIES, 'tries');
+      shellToast('未找到输入框,截图已复制,请手动 Ctrl+V');
+      return;
+    }
+    wc.executeJavaScript(pasteScript, true)
+      .then((res) => {
+        log('[ss] paste: attempt', tries, 'res=', res);
+        if (res === 'ok') {
+          shellToast('截图已粘贴到当前对话');
+        } else if (res === 'not-found') {
+          setTimeout(attempt, 700);
+        } else {
+          // 派发失败兜底:原生 paste(此时窗口已 showMain 恢复,帧焦点存在)
+          try {
+            wc.paste();
+            log('[ss] paste: dispatch fail, native paste fallback, res=', res);
+            shellToast('截图已粘贴到当前对话');
+          } catch (e2) {
+            log('[ss] paste: fallback threw', e2 && e2.message);
+            shellToast('截图已复制,请手动 Ctrl+V 粘贴');
+          }
+        }
+      })
+      .catch((e) => {
+        log('[ss] paste: executeJavaScript threw', e && e.message);
+        setTimeout(attempt, 700);
+      });
+  };
+  attempt();
 }
 
 function showMain() {
@@ -109,6 +261,45 @@ function showMain() {
 
 function hideMain() {
   if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.hide();
+}
+
+// 卸载 DS 客户端:定位 NSIS 卸载程序,二次确认后运行(仅打包版有意义)
+function uninstallApp() {
+  if (!app.isPackaged) {
+    dialog.showMessageBox({ type: 'info', message: '开发模式下不支持卸载' }).catch(() => {});
+    return;
+  }
+  const exeDir = path.dirname(process.execPath);
+  const candidates = [
+    path.join(exeDir, 'Uninstall', 'DeepSeek Desktop.exe'),
+    path.join(exeDir, 'Uninstall.exe'),
+  ];
+  const fs = require('fs');
+  const un = candidates.find((p) => fs.existsSync(p));
+  if (!un) {
+    dialog
+      .showMessageBox({ type: 'warning', message: '未找到卸载程序,请到 系统设置 → 应用 中卸载' })
+      .catch(() => {});
+    return;
+  }
+  dialog
+    .showMessageBox({
+      type: 'warning',
+      title: '卸载 DeepSeek Desktop',
+      message: '确定要卸载 DeepSeek Desktop 吗?',
+      detail: '将运行卸载程序,应用与本地数据将被移除。',
+      buttons: ['确认卸载', '取消'],
+      defaultId: 1,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response !== 0) return;
+      app.isQuiting = true;
+      const { spawn } = require('child_process');
+      spawn(un, ['/S'], { detached: true, stdio: 'ignore' }).unref();
+      app.quit();
+    })
+    .catch(() => {});
 }
 
 // ---------------- UI 动作分发(悬浮球/浮框 → 主进程) ----------------
@@ -130,17 +321,50 @@ function onUiAction(name, payload) {
         showMain();
       }
       break;
-    case 'popup':
-      popup.togglePopup();
-      break;
-    case 'popup-hide':
-      hidePopup();
-      break;
-    case 'screenshot':
-      screenshot.startScreenshot();
-      break;
     case 'ball-menu':
       ballMenu.showBallMenu(payload, mode.getDisplayMode());
+      break;
+    case 'screenshot':
+      // 截图提问(悬浮右键菜单/托盘):选区框选 → 剪贴板 → 新标签自动粘贴
+      actions.startScreenshot();
+      break;
+    case 'overlay:ready':
+      // 框选遮罩就绪:回传全屏截图
+      if (state.overlayWindow && !state.overlayWindow.isDestroyed() && state.pendingShot) {
+        state.overlayWindow.webContents.send('overlay:image', state.pendingShot.dataUrl);
+      }
+      break;
+    case 'crop': {
+      // 框选完成:入剪贴板 → 打开主窗 → 新建标签 → 自动粘贴
+      const p = payload || {};
+      log('[ss] crop received, dataUrl len=', (p.dataUrl || '').length, 'w=', p.width, 'h=', p.height);
+      const ok = screenshot.handleCrop(p);
+      log('[ss] handleCrop ok=', ok);
+      if (ok) pasteScreenshotToNewTab();
+      break;
+    }
+    case 'cancel':
+      screenshot.closeOverlay();
+      break;
+    case 'screenshot-paste-loaded': {
+      // 当前标签就绪(壳层携带活动标签 webContents id):聚焦输入框 + 粘贴剪贴板截图
+      const id = payload && payload.id ? payload.id : activeWcId;
+      log('[ss] paste-loaded received, wcId=', id, 'registered=', !!(id && webviewWcs.get(id)));
+      pasteToActiveWebview(id);
+      break;
+    }
+    case 'tab-active':
+      // 壳层上报当前活动标签(切换/新建标签时),截图粘贴以此定位
+      activeWcId = payload && payload.id ? payload.id : null;
+      break;
+    case 'toggle-main-top':
+      // 主窗置顶:主窗内按钮/托盘共用(mode 持久化 + 广播给壳按钮 + 刷新托盘勾选)
+      mode.setMainOnTop(!mode.getMainOnTop());
+      if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+        state.mainWindow.setAlwaysOnTop(mode.getMainOnTop());
+      }
+      broadcastMainTop();
+      tray.refresh();
       break;
     case 'toggle-mode':
       // 右键菜单"切换显示模式"(旧项兜底):悬浮球 ↔ 鲸鱼娘 循环
@@ -164,17 +388,6 @@ function onUiAction(name, payload) {
       // (渲染进程 window.moveTo 无效,必须走主进程)
       pet.moveWindow(payload && payload.x, payload && payload.y);
       break;
-    case 'overlay:ready':
-      if (state.overlayWindow && !state.overlayWindow.isDestroyed() && state.pendingShot) {
-        state.overlayWindow.webContents.send('overlay:image', state.pendingShot.dataUrl);
-      }
-      break;
-    case 'crop':
-      screenshot.handleCrop(payload || {});
-      break;
-    case 'cancel':
-      screenshot.closeOverlay();
-      break;
     case 'ball-move':
       // 悬浮球移动:渲染进程计算目标坐标,主进程 setPosition + 钳制(半身悬出贴边,
       // 与鲸鱼娘 pet-move 同机制;渲染进程 window.moveTo 被 Chromium 钳制无法贴边)
@@ -189,17 +402,10 @@ function onUiAction(name, payload) {
   }
 }
 
-function hidePopup() {
-  if (state.popupWindow && !state.popupWindow.isDestroyed()) state.popupWindow.hide();
-}
-
 // ---------------- 动作集合(供托盘/快捷键使用) ----------------
 const actions = {
   showMain,
   hideMain,
-  togglePopup: (text) => popup.togglePopup(text),
-  hidePopup,
-  startScreenshot: () => screenshot.startScreenshot(),
   checkForUpdates: () => updater.checkForUpdates(),
   setDisplayMode: (m) => mode.setDisplayMode(m),
   getDisplayMode: () => mode.getDisplayMode(),
@@ -211,9 +417,23 @@ const actions = {
   getForegroundAware: () => mode.getForegroundAware(),
   setWidgetSize: (s) => {
     mode.setWidgetSize(s);
-    mode.rebuildActiveWindow(); // 重建当前窗口应用新尺寸(尽量保持位置)
+    mode.rebuildActiveWindow(); // 重建当前桌宠窗口应用新尺寸
+    resizeMainWindow();         // 主窗口同步档位尺寸(仅缩放,保留标签页)
   },
   getWidgetSize: () => mode.getWidgetSize(),
+  setMainOnTop: (v) => {
+    mode.setMainOnTop(v);
+    if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+      state.mainWindow.setAlwaysOnTop(v === true);
+    }
+    broadcastMainTop(); // 同步壳内 📌 按钮状态(托盘切换时)
+    tray.refresh();     // 同步托盘勾选状态(任一入口切换都立即刷新)
+  },
+  getMainOnTop: () => mode.getMainOnTop(),
+  // 截图提问(悬浮右键菜单/托盘):选区框选 → 剪贴板 → 新标签自动粘贴
+  startScreenshot: () => screenshot.startScreenshot(),
+  // 卸载 DS 客户端(托盘菜单,二次确认后运行卸载程序)
+  uninstallApp: () => uninstallApp(),
 };
 
 // 前台感知开关的联动句柄(whenReady 内注册):开=启动前台轮询,关=停止且不再采集
@@ -223,11 +443,31 @@ let fgToggleHandler = null;
 const tray = require('./modules/tray').create({ log, state, actions });
 shortcutsApi = require('./modules/shortcuts').create({ log, state, actions });
 
+// 每个 webview 标签页:挂导航守卫 + 离线兜底 + 窗口内快捷键(快捷键转发到壳层管理标签)
+const webviewWcs = new Map(); // webContents.id → webContents(活动标签定位用)
+let activeWcId = null;        // 当前活动标签的 webContents.id(壳层 tab-active 上报)
+app.on('web-contents-created', (_e, wc) => {
+  if (wc.getType() !== 'webview') return;
+  webviewWcs.set(wc.id, wc);
+  wc.once('destroyed', () => webviewWcs.delete(wc.id));
+  const fakeWin = { webContents: wc };
+  security.attachNavigationGuard(fakeWin, 'webview');
+  offline.attachOfflineFallback(fakeWin, 'webview');
+  if (shortcutsApi && state.mainWindow && !state.mainWindow.isDestroyed()) {
+    shortcutsApi.register(wc, state.mainWindow.webContents);
+  }
+});
+
 // ---------------- 生命周期 ----------------
 app.whenReady().then(() => {
   if (!gotLock) return; // 未拿到单实例锁,等待退出
 
   mode.loadMode(); // 同步读持久化的显示模式(必须在建窗前)
+  // 开机启动默认开:仅首次启动(打包版)自动设置,记录标记后不再干预(用户可托盘关闭)
+  if (app.isPackaged && !mode.isAutoStartInit()) {
+    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
+    mode.markAutoStartInit();
+  }
   tray.createTray();
   // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)
   floating.setWidgetSize(mode.getWidgetSize());
@@ -237,12 +477,12 @@ app.whenReady().then(() => {
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));
 
-  // 启动后自动弹出对话浮窗(双击桌面图标或开机自启时显示)
-  setTimeout(() => {
-    if (!state.popupWindow || state.popupWindow.isDestroyed()) {
-      popup.togglePopup();
-    }
-  }, 1200);
+  // 启动即显示主窗口(唯一对话入口;默认右半屏居中 640x480)
+  showMain();
+  // 应用持久化的主窗置顶状态
+  if (mode.getMainOnTop() && state.mainWindow && !state.mainWindow.isDestroyed()) {
+    state.mainWindow.setAlwaysOnTop(true);
+  }
 
   app.on('activate', () => showMain());
 

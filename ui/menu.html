@@ -4,11 +4,30 @@
 <meta charset="UTF-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
 <style>
+  /* 主题变量:跟随系统深/浅色 */
+  :root {
+    --menu-bg: rgba(24, 26, 38, 0.96);
+    --menu-border: rgba(255, 255, 255, 0.08);
+    --mi-fg: #e8eaf6;
+    --mi-hover-bg: rgba(77, 107, 254, 0.35);
+    --mi-hover-fg: #fff;
+    --sep-bg: rgba(255, 255, 255, 0.1);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --menu-bg: rgba(250, 250, 253, 0.97);
+      --menu-border: rgba(0, 0, 0, 0.1);
+      --mi-fg: #2b3045;
+      --mi-hover-bg: rgba(77, 107, 254, 0.18);
+      --mi-hover-fg: #1a1f3a;
+      --sep-bg: rgba(0, 0, 0, 0.1);
+    }
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
   body { background: transparent; overflow: hidden; font-family: "Microsoft YaHei", "PingFang SC", "Segoe UI", sans-serif; display: inline-block; }
   .menu {
-    background: rgba(24, 26, 38, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--menu-bg);
+    border: 1px solid var(--menu-border);
     border-radius: 10px;
     padding: 4px;
     width: fit-content;
@@ -17,24 +36,23 @@
     padding: 7px 14px;
     border-radius: 6px;
     font-size: 12px;
-    color: #e8eaf6;
+    color: var(--mi-fg);
     cursor: pointer;
     white-space: nowrap;
   }
-  .mi:hover { background: rgba(77, 107, 254, 0.35); color: #fff; }
+  .mi:hover { background: var(--mi-hover-bg); color: var(--mi-hover-fg); }
   .mi.danger { color: #ff8a8a; }
   .mi.danger:hover { background: rgba(255, 80, 80, 0.22); color: #ffb0b0; }
   /* 显示模式三项:勾选标记占位,当前模式打勾 */
   .mi-mode .tick { display: inline-block; width: 14px; margin-right: 4px; color: #4d6bfe; }
   .mi-mode:not(.checked) .tick { visibility: hidden; }
   .mi-mode .tick::after { content: '✓'; }
-  .sep { height: 1px; margin: 4px 6px; background: rgba(255, 255, 255, 0.1); }
+  .sep { height: 1px; margin: 4px 6px; background: var(--sep-bg); }
 </style>
 </head>
 <body>
   <div class="menu">
     <div class="mi" data-act="main">打开主窗口</div>
-    <div class="mi" data-act="popup">打开对话浮窗</div>
     <div class="mi" data-act="screenshot">截图提问</div>
     <div class="sep"></div>
     <div class="mi mi-mode" data-act="mode-ball"><span class="tick"></span>悬浮球</div>

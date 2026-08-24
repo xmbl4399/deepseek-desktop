@@ -18,13 +18,12 @@ function read(p) {
 // 关键文件必须存在
 const REQUIRED_FILES = [
   'main.js',
-  'preload.js',
-  'inject.js',
-  'popup-inject.js',
   'ui/floating.html',
   'ui/floating.js',
   'ui/menu.html',
   'ui/menu.js',
+  'ui/main.html',
+  'ui/main.js',
   'ui/overlay.html',
   'ui/overlay.js',
   'ui/preload-ui.js',
@@ -43,9 +42,8 @@ const REQUIRED_FILES = [
   'modules/offline.js',
   'modules/ball-menu.js',
   'modules/floating.js',
-  'modules/popup.js',
-  'modules/screenshot.js',
   'modules/tray.js',
+  'modules/screenshot.js',
   'modules/updater.js',
   'modules/shortcuts.js',
   'modules/pet.js',
@@ -62,12 +60,9 @@ test('关键文件存在', () => {
 test('JS 语法检查(node --check)', () => {
   const jsFiles = [
     'main.js',
-    'preload.js',
-    'inject.js',
-    'popup-inject.js',
     'ui/floating.js',
     'ui/menu.js',
-    'ui/overlay.js',
+    'ui/main.js',
     'ui/preload-ui.js',
     'ui/pet.js',
     'modules/logger.js',
@@ -76,8 +71,6 @@ test('JS 语法检查(node --check)', () => {
     'modules/offline.js',
     'modules/ball-menu.js',
     'modules/floating.js',
-    'modules/popup.js',
-    'modules/screenshot.js',
     'modules/tray.js',
     'modules/updater.js',
     'modules/shortcuts.js',
@@ -104,7 +97,7 @@ test('package.json 元数据', () => {
   assert.ok(pkg.publish && pkg.publish.provider === 'github', '缺少 publish 配置');
   // 打包白名单必须覆盖 main.js 依赖的模块目录(漏了会导致 asar 内缺模块,启动即崩)
   const files = pkg.build.files || [];
-  for (const req of ['main.js', 'preload.js', 'inject.js', 'popup-inject.js', 'modules/**/*', 'ui/**/*']) {
+  for (const req of ['main.js', 'modules/**/*', 'ui/**/*']) {
     assert.ok(files.includes(req), `build.files 缺少 ${req}`);
   }
 });
@@ -122,11 +115,27 @@ test('main.js 与模块包含关键修复', () => {
   assert.ok(!main.includes('check-fullscreen.ps1') || main.includes('内嵌'), '不应依赖外部 ps1 文件');
 });
 
-test('主窗口不使用 preload', () => {
+test('主窗口为多标签壳(webview 标签栏 + 安全校验)', () => {
   const main = read('main.js');
-  // createMainWindow 的 webPreferences 中不应出现 preload 属性
-  const seg = main.split('function createMainWindow')[1].split('mainWindow.loadURL(APP_URL);')[0];
-  assert.ok(!seg.includes('preload:'), '主窗口不应加载 preload');
+  const seg = main.split('function createMainWindow')[1].split('function showMain')[0];
+  assert.ok(seg.includes('webviewTag: true'), '主窗口应启用 webviewTag(多标签)');
+  assert.ok(seg.includes('preload: UI_PRELOAD'), '主窗口壳应加载本地 preload');
+  assert.ok(seg.includes('loadFile(MAIN_PAGE)'), '主窗口应加载本地壳页面');
+  assert.ok(seg.includes('MAIN_W') && seg.includes('MAIN_H'), '缺少主窗默认尺寸常量');
+  assert.ok(seg.includes('will-attach-webview'), '缺少 webview 附加白名单校验');
+  assert.ok(seg.includes('mainSizeFor'), '缺少按分辨率分档的主窗尺寸');
+  assert.ok(seg.includes('wa.width / 2'), '主窗应默认屏幕居中');
+  // 壳渲染层:标签管理 + 置顶按钮
+  const uiMain = read('ui/main.js');
+  assert.ok(uiMain.includes("webview") && uiMain.includes("'tabs:action'"), '壳渲染层缺少标签管理');
+  assert.ok(uiMain.includes('createTab') && uiMain.includes('closeTab'), '缺少新建/关闭标签');
+  assert.ok(uiMain.includes('tab-pin') && uiMain.includes('toggle-main-top'), '壳渲染层缺少主窗置顶按钮');
+  const mainHtml = read('ui/main.html');
+  assert.ok(mainHtml.includes('id="tab-pin"'), '主窗壳缺少置顶按钮元素');
+  // 快捷键转发
+  const shortcuts = read('modules/shortcuts.js');
+  assert.ok(shortcuts.includes("'tabs:action'"), '快捷键应转发 tabs:action');
+  assert.ok(shortcuts.includes("'t'"), '缺少 Ctrl+T 新标签');
 });
 
 test('内嵌全屏检测脚本与 check-fullscreen.ps1 保持同步', () => {
@@ -145,7 +154,11 @@ test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/�
   const autoStartSeg = tray.split("label: '开机启动'")[1].split('});')[0];
   assert.ok(!autoStartSeg.includes("type: 'radio'"), '开机启动不应使用 radio(单选语义关不掉)');
   assert.ok(tray.includes("type: 'checkbox'"), '开机启动应使用 checkbox');
+  assert.ok(tray.includes("label: '主窗置顶'"), '托盘缺少主窗置顶开关');
+  assert.ok(tray.includes('getMainOnTop') && tray.includes('setMainOnTop'), '主窗置顶应走持久化设置');
   assert.ok(tray.includes("label: '前台感知开关'"), '托盘缺少前台感知开关');
+  assert.ok(tray.includes("label: '截图提问'"), '托盘缺少截图提问');
+  assert.ok(tray.includes('卸载 DS 客户端'), '托盘缺少卸载入口');
   assert.ok(tray.includes('getForegroundAware'), '前台感知开关状态应来自持久化设置');
   assert.ok(tray.includes('setForegroundAware'), '前台感知开关应走 setForegroundAware');
   assert.ok(tray.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
@@ -161,18 +174,19 @@ test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/�
   assert.ok(tray.includes('setWidgetSize'), '尺寸切换应走 setWidgetSize');
 });
 
-test('安全加固:远程窗口启用 sandbox,外链走 http/https 白名单,拦截内网地址', () => {
+test('安全加固:外链走 http/https 白名单,拦截内网地址,webview 挂守卫', () => {
   const main = read('main.js');
   const security = read('modules/security.js');
-  const seg = main.split('function createMainWindow')[1].split('mainWindow.loadURL(APP_URL);')[0];
-  assert.ok(seg.includes('sandbox: true'), '主窗口应启用 sandbox');
+  assert.ok(main.includes('web-contents-created'), '应监听 web-contents-created(webview 挂守卫)');
+  assert.ok(main.includes('attachNavigationGuard(fakeWin'), 'webview 应挂导航守卫');
+  assert.ok(main.includes('attachOfflineFallback(fakeWin'), 'webview 应挂离线兜底');
   assert.ok(security.includes('function openExternalSafe'), '应存在外链白名单函数');
   assert.ok(!security.includes('shell.openExternal(url)'), '不应再有直接 openExternal(url) 调用');
   assert.ok(security.includes('PRIVATE_HOST_RE'), '应拦截私有/内网地址(防 DNS rebinding)');
 });
 
 test('本地 UI 页面均带 CSP,离线兜底与快捷键模块存在', () => {
-  for (const f of ['ui/floating.html', 'ui/menu.html', 'ui/overlay.html', 'ui/offline.html', 'ui/pet.html']) {
+  for (const f of ['ui/floating.html', 'ui/menu.html', 'ui/main.html', 'ui/overlay.html', 'ui/offline.html', 'ui/pet.html']) {
     assert.ok(read(f).includes('Content-Security-Policy'), `${f} 缺少 CSP`);
   }
   const shortcuts = read('modules/shortcuts.js');
@@ -218,6 +232,15 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(mode.includes('rebuildActiveWindow'), 'mode 缺少重建窗口(尺寸档位生效)');
   assert.ok(main.includes('setWidgetSize'), 'main 缺少尺寸档位动作');
   assert.ok(main.includes('rebuildActiveWindow'), 'main 未接重建窗口');
+  // 主窗置顶:mode 持久化 + main 动作 + 壳内按钮/托盘
+  assert.ok(mode.includes('getMainOnTop') && mode.includes('setMainOnTop'), 'mode 缺少主窗置顶设置');
+  assert.ok(main.includes('setMainOnTop') && main.includes('getMainOnTop'), 'main 缺少主窗置顶动作');
+  assert.ok(main.includes('toggle-main-top') && main.includes('broadcastMainTop'), '主窗置顶应可壳内切换并广播');
+  // 开机启动默认开:首次启动自动设置 + 初始化标记
+  assert.ok(mode.includes('isAutoStartInit') && mode.includes('markAutoStartInit'), 'mode 缺少开机启动初始化标记');
+  assert.ok(main.includes('setLoginItemSettings'), 'main 缺少开机启动设置');
+  // 尺寸联动:悬浮球/鲸鱼娘档位 → 主窗同步缩放(保留标签页)
+  assert.ok(main.includes('resizeMainWindow'), 'main 缺少主窗尺寸联动(换档时缩放主窗)');
   // 悬浮球渲染层:拖拽走 IPC,不再依赖渲染进程 moveTo
   const uiFloating = read('ui/floating.js');
   assert.ok(uiFloating.includes("'ball-move'"), '悬浮球拖拽应走 ball-move IPC');
@@ -263,6 +286,25 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   assert.ok(petUi.includes('原地奔跑'), '移动动画应原地播放(已禁用自动移动)');
   assert.ok(petUi.includes('showBubble') && petUi.includes('DRINK_MSGS'), '鲸鱼娘缺少趣味气泡');
   assert.ok(petUi.includes('ANIM_BUBBLES'), '鲸鱼娘缺少动作台词气泡');
+  assert.ok(petUi.includes('BUBBLE_COOLDOWN_MS'), '鲸鱼娘缺少气泡冷却(防轰炸)');
+  assert.ok(petUi.includes('showBubble(pick(GREETINGS), 0, true)'), '欢迎语应绕过气泡冷却(force)');
+  assert.ok(petUi.includes('SLEEP_AFTER_MS') && petUi.includes('goSleep') && petUi.includes('wakeUp'), '鲸鱼娘缺少入睡/唤醒机制');
+  // 悬浮右键菜单:截图提问入口
+  assert.ok(read('ui/menu.html').includes('data-act="screenshot"'), '悬浮右键菜单缺少截图提问');
+  // 主进程:选区截图 + 粘贴到当前标签 + 卸载 + 置顶联动刷新
+  assert.ok(main.includes('overlay:ready') && main.includes("'crop'"), '缺少框选截图事件');
+  assert.ok(main.includes('pasteToActiveWebview') && main.includes("'tab-active'"), '缺少截图粘贴(活动标签)驱动');
+  assert.ok(main.includes('webviewWcs') && main.includes('activeWcId'), '缺少活动标签 webContents 定位');
+  assert.ok(main.includes('uninstallApp') && main.includes('dialog.showMessageBox'), '缺少卸载流程(二次确认)');
+  assert.ok(main.includes('tray.refresh()'), '置顶切换应刷新托盘菜单');
+  // 框选遮罩:交互与载荷
+  const overlayUi = read('ui/overlay.js');
+  assert.ok(overlayUi.includes("api.action('overlay:ready')") && overlayUi.includes("'crop'"), '遮罩缺少框选流程');
+  // 壳:粘贴到当前标签(不新建)+ 上报活动标签
+  const shellUi = read('ui/main.js');
+  const pasteSeg = shellUi.split("'screenshot-paste'")[1].split("'screenshot-paste-loaded'")[0];
+  assert.ok(pasteSeg && !pasteSeg.includes('createTab()'), '壳截图粘贴应作用于当前标签(不新建)');
+  assert.ok(shellUi.includes('reportActiveTab'), '壳缺少活动标签上报');
   assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
   assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');
 });

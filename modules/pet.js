@@ -9,20 +9,20 @@
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
-const PET_W = 320; // 中档宽度(默认)
-const PET_H = 180; // 中档高度(16:9)
-// 人物命中区(基准 320x180 窗口像素,与 ui/pet.js 的 HIT 常量一致;随窗口尺寸按比例缩放)
+// HIT_BASE 与尺寸缩放基准:窗口命中区按 320 宽基准比例换算(与 ui/pet.js HIT 常量一致)
+const PET_W = 320; // 缩放基准宽度(computeHit 分母,非实际窗口尺寸)
+const PET_H = 180; // 缩放基准高度
 const HIT_BASE = { x: 100, y: 25, w: 120, h: 142.5 };
 // 命中检测轮询间隔(ms)
 const HIT_POLL_MS = 100;
 const PET_PAGE = path.join(__dirname, '..', 'ui', 'pet.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
-// 三档尺寸表(纯函数,便于测试):小/中/大(16:9)
+// 三档尺寸表(纯函数,便于测试):小/中/大(16:9,可见桌宠 10-17% 屏宽)
 const WIDGET_PET_SIZES = {
-  small: { w: 240, h: 135 },
-  medium: { w: 320, h: 180 },
-  large: { w: 480, h: 270 },
+  small: { w: 220, h: 124 },
+  medium: { w: 300, h: 169 },
+  large: { w: 400, h: 225 },
 };
 function widgetPetSize(level) {
   return WIDGET_PET_SIZES[level] || WIDGET_PET_SIZES.medium;
@@ -154,7 +154,8 @@ function create({ log, state, onWindowLoaded }) {
     const wa = screen.getPrimaryDisplay().workArea;
     const x = wa.x + wa.width - HIT.x - HIT.w;
     const y = wa.y + Math.round(wa.height / 2) - Math.round(petH / 2);
-    state.petWindow.setPosition(x, y);
+    // setPosition 要求整数(HIT 区缩放后可能是浮点,须取整,否则抛 conversion failure)
+    state.petWindow.setPosition(Math.round(x), Math.round(y));
   }
 
   function destroyPetWindow() {

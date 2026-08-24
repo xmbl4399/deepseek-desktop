@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:">
+<style>
+  /* 主题变量:跟随系统深/浅色 */
+  :root {
+    --bar-bg: #171922;
+    --bar-fg: #cfd3e6;
+    --bar-active: #2a2e45;
+    --bar-hover: #23273c;
+    --bar-border: rgba(255, 255, 255, 0.08);
+    --bar-plus: #9aa3c7;
+    --view-bg: #fff;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bar-bg: #f2f3f8;
+      --bar-fg: #33384d;
+      --bar-active: #ffffff;
+      --bar-hover: #e6e8f2;
+      --bar-border: rgba(0, 0, 0, 0.1);
+      --bar-plus: #6b7394;
+      --view-bg: #fff;
+    }
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  html, body { height: 100%; overflow: hidden; background: var(--bar-bg); }
+  /* 标签栏 */
+  #tabbar {
+    display: flex;
+    align-items: center;
+    height: 34px;
+    background: var(--bar-bg);
+    border-bottom: 1px solid var(--bar-border);
+    padding: 0 4px;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  #tabbar::-webkit-scrollbar { display: none; }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 90px;
+    max-width: 180px;
+    height: 26px;
+    padding: 0 8px 0 10px;
+    border-radius: 7px;
+    color: var(--bar-fg);
+    font-size: 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    background: transparent;
+  }
+  .tab:hover { background: var(--bar-hover); }
+  .tab.active { background: var(--bar-active); color: var(--bar-fg); }
+  .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .tab-close { color: var(--bar-plus); font-size: 13px; line-height: 1; padding: 1px 3px; border-radius: 4px; }
+  .tab-close:hover { background: rgba(255, 80, 80, 0.25); color: #ff8a8a; }
+  #tab-add {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--bar-plus);
+    font-size: 16px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+  }
+  #tab-add:hover { background: var(--bar-hover); }
+  /* 主窗置顶按钮(与托盘"主窗置顶"同步;靠右) */
+  #tab-pin {
+    flex-shrink: 0;
+    margin-left: auto; /* 推到标签栏最右 */
+    width: 26px;
+    height: 26px;
+    border-radius: 7px;
+    border: none;
+    background: transparent;
+    color: var(--bar-plus);
+    font-size: 14px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    opacity: 0.55;
+  }
+  #tab-pin:hover { background: var(--bar-hover); opacity: 1; }
+  #tab-pin.active { opacity: 1; color: #4d6bfe; background: var(--bar-active); }
+  /* 内容区:webview 铺满 */
+  #views { position: absolute; inset: 34px 0 0 0; background: var(--view-bg); }
+  webview.tab-view {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+  }
+  webview.tab-view.active { display: flex; }
+  /* 截图提问提示条 */
+  #toast {
+    position: absolute;
+    top: 42px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 80%;
+    padding: 7px 16px;
+    border-radius: 8px;
+    background: var(--bar-active);
+    border: 1px solid var(--bar-border);
+    color: var(--bar-fg);
+    font-size: 12px;
+    z-index: 10;
+    opacity: 0;
+    transition: opacity .2s ease;
+    pointer-events: none;
+  }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="tabbar">
+    <div id="tab-add" title="新标签 (Ctrl+T)">+</div>
+    <div id="tab-pin" title="主窗置顶">📌</div>
+  </div>
+  <div id="views"></div>
+  <div id="toast"></div>
+  <script src="main.js"></script>
+</body>
+</html>

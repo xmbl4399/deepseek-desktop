@@ -42,7 +42,7 @@ const browserGlobals = {
 
 module.exports = [
   {
-    files: ['main.js', 'preload.js', 'modules/**/*.js', 'ui/preload-ui.js', 'scripts/**/*.js'],
+    files: ['main.js', 'modules/**/*.js', 'ui/preload-ui.js', 'scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
@@ -50,8 +50,8 @@ module.exports = [
     },
   },
   {
-    // 注入网页或本地 UI 的脚本:浏览器环境
-    files: ['inject.js', 'popup-inject.js', 'ui/floating.js', 'ui/menu.js', 'ui/overlay.js', 'ui/pet.js'],
+    // 本地 UI 的脚本:浏览器环境
+    files: ['ui/floating.js', 'ui/menu.js', 'ui/pet.js', 'ui/main.js', 'ui/overlay.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',

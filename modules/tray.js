@@ -12,8 +12,7 @@ function create({ log, state, actions }) {
     log('[tray] menu rebuilt, getLoginItemSettings().openAtLogin =', autoStart, 'displayMode =', currentMode, 'size =', currentSize);
     return Menu.buildFromTemplate([
       { label: '打开主窗口', click: actions.showMain },
-      { label: '打开对话浮窗', click: () => actions.togglePopup() },
-      { label: '截图提问', click: actions.startScreenshot },
+      { label: '截图提问', click: () => actions.startScreenshot() },
       { type: 'separator' },
       {
         label: '显示模式',
@@ -69,6 +68,13 @@ function create({ log, state, actions }) {
         click: actions.checkForUpdates,
       },
       {
+        label: '主窗置顶',
+        // 主窗口常置顶开关(借鉴 Grok-Desktop)
+        type: 'checkbox',
+        checked: actions.getMainOnTop ? actions.getMainOnTop() : false,
+        click: (mi) => actions.setMainOnTop(mi.checked),
+      },
+      {
         label: '前台感知开关',
         // 关 = 完全不读取前台窗口:全屏自动隐藏与前台上下文动画同时失效(隐私默认)
         type: 'checkbox',
@@ -85,6 +91,12 @@ function create({ log, state, actions }) {
           app.setLoginItemSettings({ openAtLogin: mi.checked, path: process.execPath });
           log('[settings] autoStart=', mi.checked, '-> registry now:', app.getLoginItemSettings().openAtLogin);
         },
+      },
+      { type: 'separator' },
+      {
+        label: '卸载 DS 客户端…',
+        // 二次确认在 uninstallApp 内弹框;运行 NSIS 卸载程序
+        click: () => actions.uninstallApp && actions.uninstallApp(),
       },
       { type: 'separator' },
       {
@@ -109,7 +121,14 @@ function create({ log, state, actions }) {
     state.tray.on('double-click', actions.showMain);
   }
 
-  return { createTray, buildAppMenu };
+  // 置顶等状态变化时主动刷新托盘菜单(不依赖 right-click 事件重建,保证勾选状态实时一致)
+  function refresh() {
+    if (state.tray && !state.tray.isDestroyed()) {
+      state.tray.setContextMenu(buildAppMenu());
+    }
+  }
+
+  return { createTray, buildAppMenu, refresh };
 }
 
 module.exports = { create };

@@ -1,11 +1,11 @@
 {
   "name": "deepseek-desktop",
-  "version": "1.0.17",
+  "version": "1.1.0",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node scripts/smoke-test.js && node scripts/require-check.js",
-    "lint": "eslint main.js preload.js inject.js popup-inject.js ui/*.js modules/*.js scripts/*.js",
+    "lint": "eslint main.js ui/*.js modules/*.js scripts/*.js",
     "build": "electron-builder --publish never"
   },
   "keywords": [],
@@ -36,9 +36,6 @@
     },
     "files": [
       "main.js",
-      "preload.js",
-      "inject.js",
-      "popup-inject.js",
       "modules/**/*",
       "ui/**/*",
       "!ui/**/*.bak"
