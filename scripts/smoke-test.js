@@ -27,6 +27,7 @@ const REQUIRED_FILES = [
   'ui/overlay.html',
   'ui/overlay.js',
   'ui/preload-ui.js',
+  'ui/webview-preload.js',
   'ui/ui.css',
   'ui/logo.png',
   'ui/offline.html',
@@ -183,6 +184,10 @@ test('安全加固:外链走 http/https 白名单,拦截内网地址,webview 挂
   assert.ok(security.includes('function openExternalSafe'), '应存在外链白名单函数');
   assert.ok(!security.includes('shell.openExternal(url)'), '不应再有直接 openExternal(url) 调用');
   assert.ok(security.includes('PRIVATE_HOST_RE'), '应拦截私有/内网地址(防 DNS rebinding)');
+  // 站外链接点击:网页拦截点击导致守卫不触发 → 注入捕获器 + webview preload 通道
+  assert.ok(main.includes('LINK_GUARD_SCRIPT'), '缺少站外链接点击捕获器');
+  assert.ok(main.includes("'webview:open-external'"), '缺少 webview 外链通道');
+  assert.ok(main.includes('WEBVIEW_PRELOAD'), '缺少 webview preload(外链通道)');
 });
 
 test('本地 UI 页面均带 CSP,离线兜底与快捷键模块存在', () => {

@@ -60,6 +60,25 @@ ipcMain.on('ui:log', (_e, ...args) => log('[ui]', ...args));
 // ---------------- 主窗口(多标签壳) ----------------
 const MAIN_PAGE = path.join(__dirname, 'ui', 'main.html');
 const UI_PRELOAD = path.join(__dirname, 'ui', 'preload-ui.js');
+const WEBVIEW_PRELOAD = path.join(__dirname, 'ui', 'webview-preload.js');
+
+// 站外链接点击捕获器(注入 webview 主世界):网页自身拦截了链接点击导致导航守卫不触发,
+// 这里在捕获阶段拦截 <a> 点击,站外链接交给主进程默认浏览器打开
+const LINK_GUARD_SCRIPT = `(() => {
+  if (window.__dsLinkGuard) return;
+  window.__dsLinkGuard = true;
+  const ORIGIN = ${JSON.stringify(security.APP_ORIGIN)};
+  document.addEventListener('click', (e) => {
+    const el = e.target;
+    const a = el && el.closest ? el.closest('a[href]') : null;
+    if (!a) return;
+    const href = a.href || '';
+    if (!href.startsWith('http') || href.startsWith(ORIGIN)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (window.dsWebview && window.dsWebview.openExternal) window.dsWebview.openExternal(href);
+  }, true);
+})();`;
 
 // 主窗尺寸按"尺寸档位"对应分辨率区间:小=720p、中=1080p/1440p、大=2160p+
 // (与悬浮球/鲸鱼娘的 小/中/大 档位联动,调整任一侧都同步)
@@ -95,12 +114,17 @@ function createMainWindow() {
     },
   });
 
-  // webview 安全:只允许附加 chat.deepseek.com(防恶意页面塞任意 webview)
-  state.mainWindow.webContents.on('will-attach-webview', (event, _webPreferences, params) => {
+  // webview 安全:只允许附加 chat.deepseek.com(防恶意页面塞任意 webview);
+  // 同时注入 webview preload(外部链接通道)与点击捕获器
+  state.mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
     if (!params.src || !params.src.startsWith(security.APP_ORIGIN)) {
       log('[security] blocked webview attach:', params.src);
       event.preventDefault();
+      return;
     }
+    webPreferences.preload = WEBVIEW_PRELOAD;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
   });
 
   state.mainWindow.loadFile(MAIN_PAGE);
@@ -456,7 +480,14 @@ app.on('web-contents-created', (_e, wc) => {
   if (shortcutsApi && state.mainWindow && !state.mainWindow.isDestroyed()) {
     shortcutsApi.register(wc, state.mainWindow.webContents);
   }
+  // 每次页面(重)加载完成后注入链接点击捕获器(网页拦截点击导致导航守卫不触发)
+  wc.on('dom-ready', () => {
+    wc.executeJavaScript(LINK_GUARD_SCRIPT, true).catch(() => {});
+  });
 });
+
+// webview 外部链接通道(webview-preload 转发)
+ipcMain.on('webview:open-external', (_e, url) => security.openExternalSafe(url));
 
 // ---------------- 生命周期 ----------------
 app.whenReady().then(() => {

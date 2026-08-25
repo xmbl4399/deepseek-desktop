@@ -22,15 +22,17 @@ function create({ log }) {
       const u = new URL(String(url));
       if (u.protocol === 'http:' || u.protocol === 'https:') {
         if (isPrivateHostname(u.hostname)) {
-          log('[ds] blocked external open (private address):', url);
+          log('[security] blocked external open (private address):', url);
           return;
         }
-        shell.openExternal(u.toString());
+        shell.openExternal(u.toString()).catch((e) => {
+          log('[security] openExternal FAILED:', u.toString().slice(0, 120), e && e.message);
+        });
       } else {
-        log('[ds] blocked external open (non-http):', url);
+        log('[security] blocked external open (non-http):', url);
       }
     } catch (e) {
-      log('[ds] blocked external open (invalid url):', url);
+      log('[security] blocked external open (invalid url):', url);
     }
   }
 
