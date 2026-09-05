@@ -622,7 +622,11 @@ if ($full -and -not $hasCaption) { Write-Output ("FULLSCREEN" + $suffix) } else 
         fsCheckRunning = false;
         try {
           if (err) {
+            // 单次失败不能终结检测链:保持上次判定,按低频继续重试。
+            // 否则恰逢"全屏隐藏中"失败时,wasFullscreen 恒为 true,
+            // 悬浮球/鲸鱼娘将永久隐藏、永不恢复(实测 2026-09-05 复现)
             log('[fullscreen] check failed:', err.message);
+            scheduleFsCheck(FS_CHECK_INTERVAL.windowed);
           } else {
             const out = String(stdout || '');
             const [flag, proc] = out.split('|');

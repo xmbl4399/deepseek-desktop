@@ -8,11 +8,23 @@ const OVERLAY_PAGE = path.join(__dirname, '..', 'ui', 'overlay.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
 function create({ log, state }) {
+  // 捕获超时兜底(ms):桌面捕获在 GPU 异常环境可能挂起(desktopCapturer.getSources 不返回),
+  // 信号量确保遮罩未出现时桌宠一定恢复,避免"截图后悬浮球/鲸鱼娘永久消失"
+  const CAPTURE_TIMEOUT_MS = 8000;
+
   async function startScreenshot() {
     if (state.overlayWindow && !state.overlayWindow.isDestroyed()) return;
     // 隐藏桌宠,避免拍进截图(悬浮球/鲸鱼娘都可能在前台)
     if (state.floatingWindow && !state.floatingWindow.isDestroyed()) state.floatingWindow.hide();
     if (state.petWindow && !state.petWindow.isDestroyed()) state.petWindow.hide();
+
+    let overlayOpened = false;
+    const guard = setTimeout(() => {
+      if (!overlayOpened) {
+        log('[screenshot] capture timeout -> restore pets');
+        restorePets();
+      }
+    }, CAPTURE_TIMEOUT_MS);
 
     try {
       // 截鼠标所在显示器(支持多屏)。用整个屏幕 bounds 而非 workArea:
@@ -30,14 +42,18 @@ function create({ log, state }) {
       if (!src) throw new Error('no screen source');
 
       state.pendingShot = { dataUrl: src.thumbnail.toDataURL(), area: bounds };
+      overlayOpened = true;
       createOverlay(bounds);
     } catch (err) {
       log('[screenshot] capture failed:', err.message);
       restorePets();
+    } finally {
+      clearTimeout(guard);
     }
   }
 
   function restorePets() {
+    log('[screenshot] restore pets');
     if (state.floatingWindow && !state.floatingWindow.isDestroyed()) state.floatingWindow.show();
     if (state.petWindow && !state.petWindow.isDestroyed()) state.petWindow.show();
   }

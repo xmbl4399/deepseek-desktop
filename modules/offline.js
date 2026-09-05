@@ -15,7 +15,8 @@ function create({ log }) {
       if (now - lastFailAt < 500) return;
       lastFailAt = now;
       log(`[offline] ${label} load failed: ${errorCode} ${errorDescription} ${validatedURL} -> show offline page`);
-      win.loadFile(OFFLINE_PAGE).catch(() => {});
+      // win 是 { webContents } 包装对象(webview 的 webContents),loadFile 挂在 webContents 上
+      win.webContents.loadFile(OFFLINE_PAGE).catch(() => {});
     });
   }
 
