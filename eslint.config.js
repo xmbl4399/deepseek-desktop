@@ -42,11 +42,20 @@ const browserGlobals = {
 
 module.exports = [
   {
-    files: ['main.js', 'modules/**/*.js', 'ui/preload-ui.js', 'ui/webview-preload.js', 'scripts/**/*.js'],
+    files: ['main.js', 'modules/**/*.js', 'ui/preload-ui.js', 'scripts/**/*.js'],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'commonjs',
       globals: nodeGlobals,
+    },
+  },
+  {
+    // preload 脚本:既有 Node 侧能力(require/ipcRenderer),又直接操作页面 DOM(window/document)
+    files: ['ui/webview-preload.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'commonjs',
+      globals: { ...nodeGlobals, ...browserGlobals },
     },
   },
   {

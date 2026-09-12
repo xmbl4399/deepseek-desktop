@@ -7,6 +7,7 @@
 // 尺寸档位(widgetSize):小/中/大,默认中;托盘"尺寸"选项调整,重建当前窗口生效
 // 主窗置顶(mainOnTop):默认关;托盘/标签栏 📌 开关调整,重启保持
 // 开机启动(autoStartInit):首次启动自动设为开机启动并记录标记(之后不再干预,用户可在托盘关)
+// closeHintShown:是否已提示过"关闭 = 最小化到托盘"(仅提示一次)
 const fs = require('fs');
 const path = require('path');
 const { app } = require('electron');
@@ -22,6 +23,7 @@ function create({ log, state, floating, pet }) {
   let widgetSize = 'medium'; // 尺寸档位(默认中)
   let mainOnTop = false; // 主窗口置顶(默认关)
   let autoStartInit = false; // 是否已执行"开机启动默认开"初始化
+  let closeHintShown = false; // 是否已提示过"关闭 = 最小化到托盘"(只提示一次)
   let fsHidden = false; // 是否因全屏检测而隐藏(切换模式时新窗口保持隐藏)
 
   function settingsPath() {
@@ -44,6 +46,8 @@ function create({ log, state, floating, pet }) {
       if (data.mainOnTop === true) mainOnTop = true;
       // 开机启动初始化标记
       if (data.autoStartInit === true) autoStartInit = true;
+      // "关闭 = 最小化到托盘"提示标记
+      if (data.closeHintShown === true) closeHintShown = true;
     } catch (e) {
       /* 首次运行/文件损坏:保持默认 */
     }
@@ -62,6 +66,7 @@ function create({ log, state, floating, pet }) {
       data.widgetSize = widgetSize;
       data.mainOnTop = mainOnTop;
       data.autoStartInit = autoStartInit;
+      data.closeHintShown = closeHintShown;
       fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
     } catch (e) {
       log('[mode] save failed:', e.message);
@@ -76,6 +81,17 @@ function create({ log, state, floating, pet }) {
     autoStartInit = true;
     saveMode();
     log('[mode] autoStart init done');
+  }
+
+  // "关闭 = 最小化到托盘"一次性提示:只提示一次,标记持久化
+  function isCloseHintShown() {
+    return closeHintShown;
+  }
+
+  function markCloseHintShown() {
+    closeHintShown = true;
+    saveMode();
+    log('[mode] close-to-tray hint shown');
   }
 
   function getForegroundAware() {
@@ -208,6 +224,8 @@ function create({ log, state, floating, pet }) {
     setMainOnTop,
     isAutoStartInit,
     markAutoStartInit,
+    isCloseHintShown,
+    markCloseHintShown,
     hideForFs,
     restoreFromFs,
     rebuildActiveWindow,

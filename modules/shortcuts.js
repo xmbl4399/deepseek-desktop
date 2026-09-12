@@ -1,5 +1,7 @@
 // 窗口内快捷键:基于 before-input-event 实现,不注册系统级全局键(避免抢键/冲突,且历史教训:全局快捷键易误触)
 // 主窗(壳 + 各标签页 webview):Ctrl+R 刷新当前标签 · Ctrl+W 隐藏到托盘 · Ctrl+T 新标签 · Ctrl+Tab/Ctrl+Shift+Tab 切换标签
+//   Ctrl+Shift+T 恢复最近关闭的标签 · Ctrl+Shift+W 关闭当前标签 · Ctrl+F 页内查找
+//   Ctrl+= / Ctrl+- / Ctrl+0 缩放 · F5 刷新 · F12 开发者工具
 // 多标签快捷键通过 tabs:action 事件转发给壳渲染层执行(标签管理在 ui/main.js 渲染层)
 function create({ log, state, actions }) {
   // register(wcOrWin, tabsTargetWc):wcOrWin 是要监听的 webContents(或含 webContents 的窗口);
@@ -15,10 +17,15 @@ function create({ log, state, actions }) {
       const shift = input.shift;
       const key = (input.key || '').toLowerCase();
 
-      // F5 刷新(无修饰键,需在 ctrl 判断前处理)
+      // 无修饰键:需要在 ctrl 判断前处理
       if (!ctrl && !alt && input.key === 'F5') {
         event.preventDefault();
         target.send('tabs:action', { action: 'reload' });
+        return;
+      }
+      if (!ctrl && !alt && input.key === 'F12') {
+        event.preventDefault();
+        if (actions.toggleDevTools) actions.toggleDevTools();
         return;
       }
 
@@ -30,14 +37,37 @@ function create({ log, state, actions }) {
           target.send('tabs:action', { action: 'reload' });
           log('[shortcut] reload tab');
           break;
-        case 'w': // Ctrl+W:隐藏主窗到托盘
+        case 'f': // Ctrl+F 页内查找(壳层查找条 + findInPage)
           event.preventDefault();
-          actions.hideMain();
-          log('[shortcut] hide main');
+          if (actions.openFind) actions.openFind();
           break;
-        case 't': // Ctrl+T 新标签
+        case '=': // Ctrl+= / Ctrl++ / 小键盘 + 放大
+        case '+':
+        case 'add':
           event.preventDefault();
-          target.send('tabs:action', { action: 'new' });
+          if (actions.zoom) actions.zoom('in');
+          break;
+        case '-': // Ctrl+- / 小键盘 - 缩小
+        case 'subtract':
+          event.preventDefault();
+          if (actions.zoom) actions.zoom('out');
+          break;
+        case '0': // Ctrl+0 重置缩放
+          event.preventDefault();
+          if (actions.zoom) actions.zoom('reset');
+          break;
+        case 'w': // Ctrl+Shift+W 关闭当前标签 · Ctrl+W 隐藏主窗到托盘
+          event.preventDefault();
+          if (shift) {
+            target.send('tabs:action', { action: 'close' });
+          } else {
+            actions.hideMain();
+            log('[shortcut] hide main');
+          }
+          break;
+        case 't': // Ctrl+Shift+T 恢复最近关闭的标签 · Ctrl+T 新标签
+          event.preventDefault();
+          target.send('tabs:action', { action: shift ? 'reopen' : 'new' });
           break;
         case 'tab': // Ctrl+Tab / Ctrl+Shift+Tab 切换标签
           event.preventDefault();

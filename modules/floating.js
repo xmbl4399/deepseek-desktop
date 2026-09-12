@@ -4,6 +4,9 @@ const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
 const BALL_SIZE = 48; // 中档(默认)
+// 默认停靠高度:屏幕可见区域高度的 2/3 处(即"下三分之一"靠上边界),比原来的垂直居中更低,
+// 不再挡住主窗正文。改这一行即可调整:3 → 距顶 1/3(更靠上),4 → 距顶 3/4(更靠下)
+const BALL_Y_RATIO = 2 / 3;
 const FLOATING_PAGE = path.join(__dirname, '..', 'ui', 'floating.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
@@ -83,9 +86,9 @@ function create({ log, state, onWindowLoaded }) {
   function positionFloating() {
     if (!state.floatingWindow) return;
     const wa = screen.getPrimaryDisplay().workArea;
-    // 默认位:主屏右缘、垂直居中
+    // 默认位:主屏右缘贴边 + 高度 2/3 处(BALL_Y_RATIO,下三分之一,不再垂直居中挡正文)
     const x = wa.x + wa.width - ballSize;
-    const y = wa.y + Math.round(wa.height / 2) - Math.round(ballSize / 2);
+    const y = wa.y + Math.round(wa.height * BALL_Y_RATIO) - Math.round(ballSize / 2);
     state.floatingWindow.setPosition(x, y);
   }
 

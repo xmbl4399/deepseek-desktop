@@ -15,6 +15,20 @@ function isPrivateHostname(hostname) {
   return PRIVATE_HOST_RE.test(h);
 }
 
+// 站点归属判定:必须按 origin 精确比较。
+// 不能用 startsWith(APP_ORIGIN)——前缀匹配会被两类 URL 骗过:
+//   https://chat.deepseek.com@evil.tld/   (用户名部分是站内域名,真实主机是 evil.tld)
+//   https://chat.deepseek.com.evil.tld/   (站内域名当子域前缀)
+// 二者都会被误判为"站内",从而在应用内(无地址栏)打开钓鱼页。
+function isAppUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    return new URL(url).origin === APP_ORIGIN;
+  } catch (e) {
+    return false;
+  }
+}
+
 function create({ log }) {
   // 站外链接白名单:只放行 http/https 交给系统浏览器,拦截内网/私有地址
   function openExternalSafe(url) {
@@ -37,15 +51,16 @@ function create({ log }) {
   }
 
   // 远程窗口(主窗/浮窗)导航守卫:站内跳转放行,站外交给系统浏览器,避免开出裸 Electron 窗口
+  // (站内判定统一走 isAppUrl 的 origin 精确比较,勿改回 startsWith)
   function attachNavigationGuard(win, label) {
     win.webContents.setWindowOpenHandler(({ url }) => {
-      if (url.startsWith(APP_ORIGIN)) return { action: 'allow' };
+      if (isAppUrl(url)) return { action: 'allow' };
       openExternalSafe(url);
       return { action: 'deny' };
     });
     // 顶层导航到站外时同样交给系统浏览器
     win.webContents.on('will-navigate', (e, url) => {
-      if (!url.startsWith(APP_ORIGIN)) {
+      if (!isAppUrl(url)) {
         e.preventDefault();
         openExternalSafe(url);
       }
@@ -53,7 +68,7 @@ function create({ log }) {
     log('[security] navigation guard attached:', label);
   }
 
-  return { openExternalSafe, attachNavigationGuard, isPrivateHostname, APP_ORIGIN };
+  return { openExternalSafe, attachNavigationGuard, isPrivateHostname, isAppUrl, APP_ORIGIN };
 }
 
 module.exports = { create };

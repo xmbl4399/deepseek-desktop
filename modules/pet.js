@@ -13,6 +13,9 @@ const path = require('path');
 const PET_W = 320; // 缩放基准宽度(computeHit 分母,非实际窗口尺寸)
 const PET_H = 180; // 缩放基准高度
 const HIT_BASE = { x: 100, y: 25, w: 120, h: 142.5 };
+// 默认纵向位置:人物主体(HIT 区)中心落在工作区高度的 2/3 处(下三分之一)。
+// 原因与悬浮球 BALL_Y_RATIO 同款:垂直居中时人物正好压住正文阅读区。
+const PET_Y_RATIO = 2 / 3;
 // 命中检测轮询间隔(ms)
 const HIT_POLL_MS = 100;
 const PET_PAGE = path.join(__dirname, '..', 'ui', 'pet.html');
@@ -147,13 +150,15 @@ function create({ log, state, onWindowLoaded }) {
     });
   }
 
-  // 默认位置:人物主体(HIT 区)右缘贴屏幕右缘、垂直居中
+  // 默认位置:人物主体(HIT 区)右缘贴屏幕右缘、纵向落在下三分之一(PET_Y_RATIO)
   // (窗口右缘会悬出屏幕,人物才真正"贴边";与拖拽钳制到右缘时的位置一致)
   function positionPet() {
     if (!state.petWindow) return;
     const wa = screen.getPrimaryDisplay().workArea;
     const x = wa.x + wa.width - HIT.x - HIT.w;
-    const y = wa.y + Math.round(wa.height / 2) - Math.round(petH / 2);
+    // 锚定的是 HIT 区(人物)中心,而不是窗口中心 —— 窗口顶部有约 14% 高的透明留白
+    const hitCenterY = HIT.y + HIT.h / 2;
+    const y = wa.y + wa.height * PET_Y_RATIO - hitCenterY;
     // setPosition 要求整数(HIT 区缩放后可能是浮点,须取整,否则抛 conversion failure)
     state.petWindow.setPosition(Math.round(x), Math.round(y));
   }

@@ -50,6 +50,8 @@ const REQUIRED_FILES = [
   'modules/pet.js',
   'modules/mode.js',
   'modules/focus.js',
+  'modules/context-menu.js',
+  'modules/menu-model.js',
 ];
 
 test('关键文件存在', () => {
@@ -78,6 +80,8 @@ test('JS 语法检查(node --check)', () => {
     'modules/pet.js',
     'modules/mode.js',
     'modules/focus.js',
+    'modules/context-menu.js',
+    'modules/menu-model.js',
   ];
   for (const f of jsFiles) {
     execFileSync(NODE, ['--check', path.join(ROOT, f)], { stdio: 'pipe' });
@@ -133,6 +137,19 @@ test('主窗口为多标签壳(webview 标签栏 + 安全校验)', () => {
   assert.ok(uiMain.includes('tab-pin') && uiMain.includes('toggle-main-top'), '壳渲染层缺少主窗置顶按钮');
   const mainHtml = read('ui/main.html');
   assert.ok(mainHtml.includes('id="tab-pin"'), '主窗壳缺少置顶按钮元素');
+  // Windows 平板触摸目标:.tab 行高与 + / 置顶按钮都要 ≥34px(鼠标时代的 26px 太窄)
+  const barH = Number((mainHtml.match(/#tabbar\s*\{[\s\S]*?height:\s*(\d+)px/) || [])[1]);
+  const tabH = Number((mainHtml.match(/\.tab\s*\{[\s\S]*?height:\s*(\d+)px/) || [])[1]);
+  const pinH = Number((mainHtml.match(/#tab-pin\s*\{[\s\S]*?height:\s*(\d+)px/) || [])[1]);
+  const addH = Number((mainHtml.match(/#tab-add\s*\{[\s\S]*?height:\s*(\d+)px/) || [])[1]);
+  assert.ok(barH >= 44, `标签栏高度应 ≥44px(触摸),实际 ${barH}`);
+  assert.ok(tabH >= 34, `标签页高度应 ≥34px(触摸),实际 ${tabH}`);
+  assert.ok(pinH >= 34 && addH >= 34, `置顶/新建按钮应 ≥34px(触摸),实际 pin=${pinH} add=${addH}`);
+  // 内容区顶部偏移必须跟着标签栏高度走,否则 webview 会被压住或被留白顶开
+  assert.ok(
+    mainHtml.includes(`inset: ${barH}px 0 0 0`),
+    `#views 的 inset 顶部(${barH}px)与 #tabbar 高度不一致`,
+  );
   // 快捷键转发
   const shortcuts = read('modules/shortcuts.js');
   assert.ok(shortcuts.includes("'tabs:action'"), '快捷键应转发 tabs:action');
@@ -149,30 +166,31 @@ test('内嵌全屏检测脚本与 check-fullscreen.ps1 保持同步', () => {
   assert.strictEqual(norm(m[1]), norm(read('check-fullscreen.ps1')), '内嵌脚本与 ps1 文件不一致');
 });
 
-test('开机启动为 checkbox 且托盘菜单弹出前重建(可正常关闭/状态不过期)', () => {
+test('托盘菜单来自共用模型(项序/分组单一来源),弹出前重建保证勾选不过期', () => {
   const tray = read('modules/tray.js');
-  // radio 仅允许出现在"显示模式"子菜单(单选语义正确);开机启动区不得用 radio
-  const autoStartSeg = tray.split("label: '开机启动'")[1].split('});')[0];
-  assert.ok(!autoStartSeg.includes("type: 'radio'"), '开机启动不应使用 radio(单选语义关不掉)');
-  assert.ok(tray.includes("type: 'checkbox'"), '开机启动应使用 checkbox');
-  assert.ok(tray.includes("label: '主窗置顶'"), '托盘缺少主窗置顶开关');
-  assert.ok(tray.includes('getMainOnTop') && tray.includes('setMainOnTop'), '主窗置顶应走持久化设置');
-  assert.ok(tray.includes("label: '前台感知开关'"), '托盘缺少前台感知开关');
-  assert.ok(tray.includes("label: '截图提问'"), '托盘缺少截图提问');
-  assert.ok(tray.includes('卸载 DS 客户端'), '托盘缺少卸载入口');
-  assert.ok(tray.includes('getForegroundAware'), '前台感知开关状态应来自持久化设置');
-  assert.ok(tray.includes('setForegroundAware'), '前台感知开关应走 setForegroundAware');
+  const model = read('modules/menu-model.js');
+  const main = read('main.js');
+  // 项序/分组只在 menu-model.js 定义;tray.js 只负责"画",不得再硬编码 label
+  assert.ok(tray.includes("require('./menu-model')"), '托盘应从共用菜单模型取项序');
+  assert.ok(tray.includes('toTemplate'), '托盘缺少模型 → 原生模板的转换');
+  assert.ok(!tray.includes("label: '开机启动'"), '托盘不应再硬编码菜单项(label 归 menu-model)');
+  assert.ok(!tray.includes("label: '显示模式'"), '托盘不应再硬编码子菜单');
+  // 模型侧:分组顺序 动作 → 桌宠 → 开关 → 信息 → 终结
+  for (const key of ["key: 'action'", "key: 'pet'", "key: 'toggle'", "key: 'info'", "key: 'end'"]) {
+    assert.ok(model.includes(key), `菜单模型缺少分组 ${key}`);
+  }
+  assert.ok(model.includes('trayOnly'), '模型缺少 trayOnly(托盘专属项过滤)');
+  assert.ok(model.includes("caption: '尺寸'"), '球菜单缺少尺寸分组的标题');
+  // 开关必须 checkbox(radio 单选语义关不掉);尺寸/模式 radio
+  assert.ok(model.includes("type: 'checkbox'"), '开关项应使用 checkbox');
+  assert.ok(model.includes("type: 'radio'"), '模式/尺寸应使用 radio');
+  // 每次右键弹出前重建(勾选状态与真实设置一致)
   assert.ok(tray.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
-  assert.ok(tray.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
-  // 显示模式子菜单:悬浮球/鲸鱼娘 radio 二选一
-  assert.ok(tray.includes("label: '显示模式'"), '托盘应提供显示模式子菜单');
-  assert.ok(tray.includes("label: '悬浮球'"), '显示模式子菜单缺少悬浮球项');
-  assert.ok(tray.includes("label: '鲸鱼娘'"), '显示模式子菜单缺少鲸鱼娘项');
-  assert.ok(tray.includes('setDisplayMode'), '显示模式切换应走 setDisplayMode');
-  // 尺寸子菜单:小/中/大
-  assert.ok(tray.includes("label: '尺寸'"), '托盘应提供尺寸子菜单');
-  assert.ok(tray.includes("label: '小'") && tray.includes("label: '中'") && tray.includes("label: '大'"), '尺寸子菜单缺少 小/中/大');
-  assert.ok(tray.includes('setWidgetSize'), '尺寸切换应走 setWidgetSize');
+  // 开机启动:显式传 path(Windows 下不传会因 exe 路径不一致误判状态)
+  assert.ok(main.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
+  // 两个入口共用同一动作分发入口
+  assert.ok(main.includes('onMenuAction: onUiAction'), '托盘菜单项应走主进程统一动作分发');
+  assert.ok(main.includes('getMenuContext'), '缺少菜单上下文(项序渲染依据)');
 });
 
 test('安全加固:外链走 http/https 白名单,拦截内网地址,webview 挂守卫', () => {
@@ -210,10 +228,11 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(mode.includes('toggleMode') && mode.includes('setDisplayMode'), '缺少模式切换');
   assert.ok(mode.includes('getActiveWindow'), '缺少活动窗口查询(全屏检测依赖)');
   assert.ok(mode.includes("'off'"), '显示模式应支持"关闭显示"(off)');
-  // 托盘:显示模式 radio 三选一(含关闭显示)
-  const tray = read('modules/tray.js');
-  assert.ok(tray.includes("label: '关闭显示'"), '托盘显示模式子菜单缺少关闭显示项');
-  assert.ok(tray.includes("checked: currentMode === 'off'"), '关闭显示 radio 未按当前模式勾选');
+  // 菜单:显示模式 radio 三选一(含关闭显示),项序定义在共用模型里
+  const menuModelSrc = read('modules/menu-model.js');
+  assert.ok(menuModelSrc.includes("'关闭显示'"), '菜单模型缺少关闭显示项');
+  assert.ok(menuModelSrc.includes("radio('mode-off'"), '关闭显示应为 radio 且按当前模式勾选');
+  assert.ok(menuModelSrc.includes("radio('size-small'"), '菜单模型缺少尺寸档位(小/中/大)');
   // pet 模块:透明窗口 + 点击穿透
   assert.ok(pet.includes('transparent: true'), '鲸鱼娘窗口应透明');
   assert.ok(pet.includes('setIgnoreMouseEvents'), '鲸鱼娘窗口应支持点击穿透');
@@ -226,6 +245,15 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(floating.includes('moveWindow'), '悬浮球缺少主进程移动方法');
   assert.ok(floating.includes("'ball-pos'"), '悬浮球缺少位置回传 ball-pos');
   assert.ok(floating.includes('widgetBallSize') && floating.includes('setWidgetSize'), '悬浮球缺少尺寸档位(小/中/大)');
+  // 悬浮球手势与鲸鱼娘对齐:双击(240ms 内两击)才开关主窗,单击不响应
+  const uiBallSrc = read('ui/floating.js');
+  assert.ok(!uiBallSrc.includes('dblclick'), '悬浮球不应再依赖 dblclick 事件(与鲸鱼娘统一为 240ms 二次点击判定)');
+  const toggleHits = (uiBallSrc.match(/toggle-main/g) || []).length;
+  assert.ok(toggleHits === 1, `悬浮球只应有一处 toggle-main(双击分支),实际 ${toggleHits}`);
+  assert.ok(
+    !/setTimeout\([\s\S]{0,80}toggle-main/.test(uiBallSrc),
+    '悬浮球单击分支不得再调用 toggle-main(单击应完全不响应)',
+  );
   // 鲸鱼娘尺寸档位 + 页面 100% 填充
   assert.ok(pet.includes('widgetPetSize') && pet.includes('setWidgetSize'), '鲸鱼娘缺少尺寸档位(小/中/大)');
   const petHtml = read('ui/pet.html');
@@ -252,10 +280,26 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   // 鲸鱼娘渲染层:移动动画池(原地奔跑,自动移动已禁用)
   const petUi = read('ui/pet.js');
   assert.ok(petUi.includes('原地左转奔跑'), '移动池应含跑步动画(原地左转奔跑)');
-  // 右键菜单:显示模式三项(勾选高亮)+ 退出
+  // 自绘右键菜单:项序由模型渲染 + 支持键盘操作(原生菜单有整套键位,自绘的不能缺)
   const menuHtml = read('ui/menu.html');
-  assert.ok(menuHtml.includes('data-act="mode-ball"') && menuHtml.includes('data-act="mode-pet"') && menuHtml.includes('data-act="mode-off"'), '右键菜单缺少显示模式三项');
-  assert.ok(menuHtml.includes('data-act="quit"'), '右键菜单缺少退出项');
+  const menuJs = read('ui/menu.js');
+  assert.ok(menuHtml.includes('id="menu"') && !menuHtml.includes('data-act='), '自绘菜单项应由模型渲染,不再硬编码在 HTML 里');
+  assert.ok(menuJs.includes('__dsMenuRender'), '菜单渲染层缺少模型入口(__dsMenuRender)');
+  assert.ok(menuJs.includes("'ArrowDown'") && menuJs.includes("'ArrowUp'"), '自绘菜单缺少 ↑↓ 导航');
+  assert.ok(menuJs.includes("'Escape'"), '自绘菜单缺少 Esc 关闭');
+  assert.ok(menuJs.includes("'Enter'"), '自绘菜单缺少 Enter 执行');
+  // 触摸友好:行高必须比原来的 26px 大(12px 字 + 7px 内边距)
+  assert.ok(/\.mi\s*\{[\s\S]*padding:\s*9px/.test(menuHtml), '自绘菜单行高应加大(触摸点选命中率)');
+  // 可折叠子菜单:显示模式+尺寸合计 6 项,平铺会把高频项挤出屏幕 → 父行 + 就地展开
+  assert.ok(menuJs.includes('buildSubmenu') && menuJs.includes('toggleSub'), '自绘菜单缺少可折叠子菜单');
+  assert.ok(menuHtml.includes('.subwrap.open .sub'), '子项应默认收起(展开才显示)');
+  assert.ok(menuJs.includes('api.resize'), '折叠组展开后应回报新尺寸(否则窗口高度不跟着变)');
+  assert.ok(menuJs.includes('offsetParent'), '键盘导航应跳过收起中的子项');
+  // 模型 → 渲染层的下发链路
+  assert.ok(read('modules/ball-menu.js').includes("'ball'"), '悬浮球菜单应按 ball 入口取模型(过滤托盘专属项)');
+  // 尺寸重设必须绕开 ui:action —— onUiAction 会先关掉菜单窗口,展开折叠组不能触发那套语义
+  assert.ok(main.includes("on('ui:resize'"), '主进程缺少菜单尺寸重设通道(ui:resize)');
+  assert.ok(!read('ui/preload-ui.js').includes("resize: (w, h) => ipcRenderer.send('ui:action'"), '折叠组尺寸回报不应走 ui:action');
   // 主进程装配
   assert.ok(main.includes("require('./modules/mode')"), 'main.js 未装配 mode 模块');
   assert.ok(main.includes("require('./modules/pet')"), 'main.js 未装配 pet 模块');
@@ -294,8 +338,8 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   assert.ok(petUi.includes('BUBBLE_COOLDOWN_MS'), '鲸鱼娘缺少气泡冷却(防轰炸)');
   assert.ok(petUi.includes('showBubble(pick(GREETINGS), 0, true)'), '欢迎语应绕过气泡冷却(force)');
   assert.ok(petUi.includes('SLEEP_AFTER_MS') && petUi.includes('goSleep') && petUi.includes('wakeUp'), '鲸鱼娘缺少入睡/唤醒机制');
-  // 悬浮右键菜单:截图提问入口
-  assert.ok(read('ui/menu.html').includes('data-act="screenshot"'), '悬浮右键菜单缺少截图提问');
+  // 菜单:截图提问入口(与托盘共用同一份模型)
+  assert.ok(read('modules/menu-model.js').includes("act: 'screenshot'"), '菜单缺少截图提问');
   // 主进程:选区截图 + 粘贴到当前标签 + 卸载 + 置顶联动刷新
   assert.ok(main.includes('overlay:ready') && main.includes("'crop'"), '缺少框选截图事件');
   assert.ok(main.includes('pasteToActiveWebview') && main.includes("'tab-active'"), '缺少截图粘贴(活动标签)驱动');
@@ -312,4 +356,86 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   assert.ok(shellUi.includes('reportActiveTab'), '壳缺少活动标签上报');
   assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
   assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');
+});
+
+test('v1.1.3 品牌统一:标题栏/托盘名/卸载文案 + Windows 应用标识', () => {
+  // 窗口标题:壳页面必须有 <title>,否则 Electron 回退 app.name(= deepseek-desktop)
+  assert.ok(read('ui/main.html').includes('<title>DeepSeek</title>'), '壳页面缺少 <title>DeepSeek</title>');
+  const main = read('main.js');
+  assert.ok(main.includes("title: 'DeepSeek'"), '主窗缺少 title 兜底(首帧不闪旧名)');
+  assert.ok(main.includes("app.setAppUserModelId('com.deepseek.desktop')"), '缺少 Windows 应用标识(任务栏/通知)');
+  assert.ok(main.includes("title: '卸载 DeepSeek'"), '卸载确认框标题未统一');
+  // 卸载程序实际文件名来自 productName,不能跟着显示文案改
+  assert.ok(main.includes("'Uninstall', 'DeepSeek Desktop.exe'"), '卸载器路径不应改动(安装目录实际产物)');
+  const tray = read('modules/tray.js');
+  assert.ok(tray.includes("setToolTip('DeepSeek')"), '托盘悬浮名应为 DeepSeek');
+  assert.ok(tray.includes('displayBalloon'), '缺少首次"关闭到托盘"提示');
+  // "关于"带版本号(原先只有点开对话框才看得到版本,而菜单是最常打开的入口)
+  const modelSrc = read('modules/menu-model.js');
+  assert.ok(modelSrc.includes("'关于 DeepSeek'"), '菜单缺少"关于"入口(版本号可见性)');
+  assert.ok(modelSrc.includes("' v' + c.version"), '关于项应带上当前版本号');
+  // 只改显示名:name / productName 牵动 userData 目录与安装路径,不得改动
+  const pkg = JSON.parse(read('package.json'));
+  assert.strictEqual(pkg.name, 'deepseek-desktop', 'package.json name 不可改(userData 目录派生自它)');
+  assert.strictEqual(pkg.build.productName, 'DeepSeek Desktop', 'productName 不可改(安装目录/卸载器路径派生自它)');
+});
+
+test('右键/长按菜单 + 站内判定按 origin 精确比较', () => {
+  const ctx = read('modules/context-menu.js');
+  assert.ok(ctx.includes("on('context-menu'"), '缺少 context-menu 事件注册(右键与长按触摸共用)');
+  assert.ok(ctx.includes('copyImageAt'), '图片右键缺少"复制图片"');
+  assert.ok(ctx.includes('openExternalSafe'), '链接右键必须走外链白名单');
+  assert.ok(read('main.js').includes('contextMenu.attach'), '主进程未给标签页挂右键菜单');
+  // 长按时序:首次长按只选中、再次长按才弹菜单(靠手势起点选区快照区分)
+  assert.ok(ctx.includes('selectionBeforeGesture'), '右键菜单缺少手势起点选区快照依赖');
+  assert.ok(ctx.includes('首次长按仅选中'), '右键菜单缺少"首次长按只选中"分支');
+  assert.ok(read('main.js').includes('webview:selection-snapshot'), '主进程未接收选区快照 IPC');
+  const wvPreload = read('ui/webview-preload.js');
+  assert.ok(wvPreload.includes('webview:selection-snapshot'), 'preload 未上报选区快照');
+  assert.ok(wvPreload.includes("'pointerdown'"), 'preload 未在 pointerdown(手势起点)取样');
+  // 菜单必须显式定位:不传 x/y 时 Electron 弹在鼠标光标处,触摸长按会跑到跟手指无关的位置
+  assert.ok(ctx.includes('refreshHostOffset'), '右键菜单缺少 webview 偏移获取(菜单定位)');
+  assert.ok(ctx.includes('getBoundingClientRect'), '缺少壳层 webview 元素位置探测');
+  assert.ok(ctx.includes('opts.x') && ctx.includes('opts.y'), '弹菜单时未显式传 x/y');
+  // 安全:站内判定必须 origin 精确比较(前缀匹配会被 *.evil.tld / userinfo 骗过)
+  const security = read('modules/security.js');
+  assert.ok(security.includes('function isAppUrl'), '缺少 isAppUrl(origin 精确比较)');
+  assert.ok(!security.includes('url.startsWith(APP_ORIGIN)'), '不应再用前缀匹配判定站内');
+  assert.ok(!read('main.js').includes('params.src.startsWith(security.APP_ORIGIN)'), 'webview 白名单应走 isAppUrl');
+  assert.ok(!read('main.js').includes('href.startsWith(ORIGIN)'), '注入脚本应走 origin 比较');
+});
+
+test('交互补齐:中文应用菜单 / 页内查找 / 缩放 / 标签右键与崩溃兜底', () => {
+  const main = read('main.js');
+  assert.ok(main.includes('Menu.setApplicationMenu'), '缺少中文应用菜单(否则 Alt 弹 Electron 英文默认菜单)');
+  assert.ok(main.includes('setupAppMenu'), '缺少应用菜单装配');
+  assert.ok(main.includes('findInPage') && main.includes("wc.on('found-in-page'"), '缺少页内查找与结果回传');
+  assert.ok(main.includes('zoomActive') && main.includes('setZoomLevel'), '缺少缩放');
+  const shortcuts = read('modules/shortcuts.js');
+  assert.ok(shortcuts.includes("case 'f'"), '缺少 Ctrl+F');
+  assert.ok(shortcuts.includes("'in'") && shortcuts.includes("'out'"), '缺少 Ctrl+=/- 缩放');
+  assert.ok(shortcuts.includes('reopen'), '缺少 Ctrl+Shift+T 恢复标签');
+  assert.ok(shortcuts.includes("action: 'close'"), '缺少 Ctrl+Shift+W 关闭标签');
+  const shellUi = read('ui/main.js');
+  assert.ok(shellUi.includes('openTabMenu') && shellUi.includes('closeOtherTabs'), '壳层缺少标签右键菜单');
+  assert.ok(shellUi.includes('auxclick'), '壳层缺少中键关闭标签');
+  assert.ok(shellUi.includes('reorderTab'), '壳层缺少标签拖拽排序');
+  assert.ok(shellUi.includes('render-process-gone'), '壳层缺少标签崩溃兜底');
+  assert.ok(shellUi.includes('reopenTab'), '壳层缺少恢复已关闭标签');
+  assert.ok(read('ui/main.html').includes('id="findbar"'), '壳页面缺少查找条');
+  assert.ok(read('ui/main.html').includes('id="tabmenu"'), '壳页面缺少标签菜单容器');
+});
+
+test('悬浮球默认位置:右缘贴边 + 高度 2/3 处(不再垂直居中)', () => {
+  const floating = read('modules/floating.js');
+  assert.ok(floating.includes('BALL_Y_RATIO'), '缺少默认停靠高度常量');
+  assert.ok(!floating.includes('Math.round(wa.height / 2)'), '默认位不应再垂直居中');
+});
+
+test('鲸鱼娘默认位置:右缘贴边 + 人物中心落在下三分之一(与悬浮球同款)', () => {
+  const pet = read('modules/pet.js');
+  assert.ok(pet.includes('PET_Y_RATIO'), '缺少默认停靠高度常量');
+  assert.ok(!pet.includes('Math.round(wa.height / 2)'), '默认位不应再垂直居中');
+  // 锚定的是 HIT 区(人物)中心,不是窗口中心 —— 窗口顶部有透明留白
+  assert.ok(pet.includes('hitCenterY'), '应按人物命中区中心定位,否则人物会偏上');
 });

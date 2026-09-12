@@ -1,6 +1,6 @@
 // 悬浮球:JS 拖拽(目标坐标发主进程 setPosition 驱动,与鲸鱼娘一致——
 // 渲染进程 window.moveTo 被 Chromium 钳制,无法悬出屏幕贴边;主进程 setPosition 可)
-// 单击弹浮框 / 双击主窗 / 右键菜单
+// 手势:拖拽移动 / 双击开关主窗(单击不响应) / 右键菜单
 const api = window.ds;
 const ball = document.querySelector('#ball');
 
@@ -62,26 +62,24 @@ api.on('pet-context', (c) => {
 });
 
 // ---------- 球体事件 ----------
-// 单击 → 打开主窗口(切换显示/隐藏);双击 → 同样开关主窗口
-ball.addEventListener('click', (e) => {
+// 交互与鲸鱼娘对齐:240ms 内的第二次点击 = 双击 → 开关主窗口;
+// 单击**不响应**(避免误触把主窗弹出来/收起来,球常贴在正文边缘,单击太容易碰到)
+ball.addEventListener('click', () => {
   dbg('click', { moved });
-  if (moved) { moved = false; return; }
-  if (clickTimer) clearTimeout(clickTimer);
-  clickTimer = setTimeout(() => api.action('toggle-main'), 240);
-});
-
-// 双击 → 打开/关闭主窗口
-ball.addEventListener('dblclick', () => {
-  dbg('dblclick');
-  if (clickTimer) clearTimeout(clickTimer);
-  clickTimer = null;
-  api.action('toggle-main');
+  if (moved) { moved = false; return; } // 拖拽后的幽灵 click
+  if (clickTimer) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+    api.action('toggle-main'); // 双击:打开/关闭主窗口
+    return;
+  }
+  clickTimer = setTimeout(() => { clickTimer = null; }, 240); // 单击:只等第二击,不做任何事
 });
 
 // 右键 → 自绘菜单
 ball.addEventListener('contextmenu', (e) => {
   dbg('contextmenu', { sx: e.screenX, sy: e.screenY });
   e.preventDefault();
-  if (clickTimer) clearTimeout(clickTimer);
+  if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
   api.action('ball-menu', { wx: ballX, wy: ballY, mx: e.screenX, my: e.screenY });
 });

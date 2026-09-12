@@ -1,15 +1,31 @@
 // DeepSeek 桌面助手 - 主进程(组装层)
 // 功能模块见 modules/ 目录:logger/state/security/offline/ball-menu/floating/tray/updater/shortcuts
-// 本文件保留:单实例锁、主窗口(多标签壳)、UI 动作分发、全屏检测、生命周期
-const { app, BrowserWindow, ipcMain, screen, dialog, clipboard } = require('electron');
+// 本文件保留:单实例锁、主窗口(多标签壳)、UI 动作分发、应用菜单、全屏检测、生命周期
+const { app, BrowserWindow, ipcMain, screen, dialog, clipboard, Menu, shell } = require('electron');
 const path = require('path');
+
+// Windows 任务栏/通知/更新提示的应用标识;不设置时会显示为 electron.app.* 或与快捷方式分组错乱。
+// 注意:此项不影响 app.getName()/userData 路径(改 userData 目录会导致登录态与设置丢失,本项目不做)
+app.setAppUserModelId('com.deepseek.desktop');
 
 // ---------------- 模块装配 ----------------
 const { log } = require('./modules/logger');
 const state = require('./modules/state');
 const security = require('./modules/security').create({ log });
 const offline = require('./modules/offline').create({ log });
-const ballMenu = require('./modules/ball-menu').create({ log, state });
+// 菜单模型:托盘与悬浮球菜单共用同一份项序/分组(modules/menu-model.js),
+// 这里只提供"当前状态"作为渲染依据 —— 加项/调顺序改 menu-model.js 即可,两个入口同时生效
+const ballMenu = require('./modules/ball-menu').create({ log, state, getMenuContext: menuContext });
+// 每个 webview 的"手势起点选区快照"(webview-preload 在 pointerdown 时上报):
+// webContents.id → { text, at }。context-menu 阶段用它区分"选区是这次手势刚选中"还是"本来就选中"。
+const selectionSnapshots = new Map();
+const SNAPSHOT_TTL = 5000; // 超过 5s 的快照视为过期(避免残留旧值误判)
+function selectionBeforeGesture(wc) {
+  const snap = selectionSnapshots.get(wc.id);
+  if (!snap || Date.now() - snap.at > SNAPSHOT_TTL) return null; // null = 未知 → 走旧行为(直接弹菜单)
+  return snap.text;
+}
+const contextMenu = require('./modules/context-menu').create({ log, security, selectionBeforeGesture });
 
 // 最后广播的前台上下文;窗口(重)加载完成后补发,避免"加载期事件丢失"导致感知不生效
 let lastContext = null;
@@ -64,16 +80,21 @@ const WEBVIEW_PRELOAD = path.join(__dirname, 'ui', 'webview-preload.js');
 
 // 站外链接点击捕获器(注入 webview 主世界):网页自身拦截了链接点击导致导航守卫不触发,
 // 这里在捕获阶段拦截 <a> 点击,站外链接交给主进程默认浏览器打开
+// 站内判定必须按 origin 精确比较:前缀匹配会被 https://chat.deepseek.com.evil.tld 与
+// https://chat.deepseek.com@evil.tld 骗过,导致钓鱼页在应用内(无地址栏)打开
 const LINK_GUARD_SCRIPT = `(() => {
   if (window.__dsLinkGuard) return;
   window.__dsLinkGuard = true;
   const ORIGIN = ${JSON.stringify(security.APP_ORIGIN)};
+  const isAppUrl = (href) => {
+    try { return new URL(href).origin === ORIGIN; } catch (e) { return false; }
+  };
   document.addEventListener('click', (e) => {
     const el = e.target;
     const a = el && el.closest ? el.closest('a[href]') : null;
     if (!a) return;
     const href = a.href || '';
-    if (!href.startsWith('http') || href.startsWith(ORIGIN)) return;
+    if (!href.startsWith('http') || isAppUrl(href)) return;
     e.preventDefault();
     e.stopPropagation();
     if (window.dsWebview && window.dsWebview.openExternal) window.dsWebview.openExternal(href);
@@ -101,6 +122,8 @@ function createMainWindow() {
     y: wa.y + Math.round(wa.height / 2) - Math.round(MAIN_H / 2),
     minWidth: 480,
     minHeight: 360,
+    // 标题栏显示产品名(壳页面 ui/main.html 也带 <title>DeepSeek</title>,此处兜底首帧不闪旧名)
+    title: 'DeepSeek',
     icon: path.join(__dirname, 'ui', 'logo.png'),
     show: false,
     autoHideMenuBar: true,
@@ -117,7 +140,7 @@ function createMainWindow() {
   // webview 安全:只允许附加 chat.deepseek.com(防恶意页面塞任意 webview);
   // 同时注入 webview preload(外部链接通道)与点击捕获器
   state.mainWindow.webContents.on('will-attach-webview', (event, webPreferences, params) => {
-    if (!params.src || !params.src.startsWith(security.APP_ORIGIN)) {
+    if (!security.isAppUrl(params.src)) {
       log('[security] blocked webview attach:', params.src);
       event.preventDefault();
       return;
@@ -133,11 +156,16 @@ function createMainWindow() {
   // 壳加载完成后下发主窗置顶状态(置顶按钮初始态)
   state.mainWindow.webContents.once('did-finish-load', () => broadcastMainTop());
 
-  // 关闭按钮 → 隐藏到托盘,而非退出
+  // 关闭按钮 → 隐藏到托盘,而非退出;首次关闭用系统气泡说明一次(否则新用户会以为"关不掉/后台偷跑")
   state.mainWindow.on('close', (e) => {
     if (!app.isQuiting) {
       e.preventDefault();
       state.mainWindow.hide();
+      if (!mode.isCloseHintShown()) {
+        mode.markCloseHintShown();
+        tray.notify('DeepSeek 已最小化到托盘', '程序仍在后台运行,右键托盘图标可显示或退出。');
+        log('[ui] close-to-tray hint shown');
+      }
     }
   });
 }
@@ -274,6 +302,139 @@ function pasteToActiveWebview(wcId) {
   attempt();
 }
 
+// ---------------- 活动标签工具(查找 / 缩放 / 开发者工具都作用于当前标签) ----------------
+function activeWc() {
+  const wc = activeWcId ? webviewWcs.get(activeWcId) : null;
+  if (wc && !wc.isDestroyed()) return wc;
+  // 兜底:取第一个未销毁的标签(activeWcId 尚未上报时,如启动即按快捷键)
+  for (const w of webviewWcs.values()) {
+    if (!w.isDestroyed()) return w;
+  }
+  return null;
+}
+
+// 缩放:Ctrl+= / Ctrl+- / Ctrl+0(Electron zoomLevel,实际比例 = 1.2^level)
+const zoomLevels = new Map();
+function zoomActive(dir) {
+  const wc = activeWc();
+  if (!wc) return;
+  let level = zoomLevels.get(wc.id) || 0;
+  if (dir === 'in') level = Math.min(level + 0.5, 4);
+  else if (dir === 'out') level = Math.max(level - 0.5, -3);
+  else level = 0;
+  zoomLevels.set(wc.id, level);
+  wc.setZoomLevel(level);
+  const pct = Math.round(Math.pow(1.2, level) * 100);
+  shellToast('缩放 ' + pct + '%');
+  log('[zoom] level=', level, 'pct=', pct);
+}
+
+// 页内查找:壳层查找条收集输入 → 当前标签 findInPage(结果数由 found-in-page 回传壳层)
+function openFindBar() {
+  showMain();
+  sendToShell('find-open', {});
+}
+
+function findInActive(text, opts) {
+  const wc = activeWc();
+  if (!wc) return;
+  const q = String(text || '');
+  if (!q) {
+    wc.stopFindInPage('clearSelection');
+    return;
+  }
+  wc.findInPage(q, opts || {});
+}
+
+function closeFindBar() {
+  const wc = activeWc();
+  if (wc) wc.stopFindInPage('clearSelection');
+  sendToShell('find-closed', {});
+}
+
+function toggleDevTools() {
+  const wc = activeWc();
+  if (!wc) return;
+  if (wc.isDevToolsOpened()) wc.closeDevTools();
+  else wc.openDevTools({ mode: 'detach' });
+}
+
+// 关于:版本号 + 项目主页 + 检查更新(应用内唯一能确认当前版本的地方)
+function showAbout() {
+  dialog
+    .showMessageBox({
+      type: 'info',
+      title: '关于 DeepSeek',
+      message: 'DeepSeek 桌面版',
+      detail: [
+        '版本 ' + app.getVersion(),
+        'Electron ' + process.versions.electron,
+        '仓库 https://github.com/xmbl4399/deepseek-desktop',
+      ].join('\n'),
+      buttons: ['检查更新', '关闭'],
+      defaultId: 1,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response === 0) updater.checkForUpdates();
+    })
+    .catch(() => {});
+}
+
+// 应用菜单(中文):不设置时按 Alt 会弹出 Electron 英文默认菜单(含 Toggle Developer Tools)。
+// 编辑类 role 同时为 webview 内的复制/粘贴/撤销提供可靠的加速键。
+function setupAppMenu() {
+  const tabAction = (action) => () => sendToShell('tabs:action', { action });
+  const template = [
+    {
+      label: '编辑',
+      submenu: [
+        { label: '撤销', role: 'undo' },
+        { label: '重做', role: 'redo' },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut' },
+        { label: '复制', role: 'copy' },
+        { label: '粘贴', role: 'paste' },
+        { label: '全选', role: 'selectAll' },
+      ],
+    },
+    {
+      label: '标签',
+      submenu: [
+        { label: '新建标签', accelerator: 'CmdOrCtrl+T', click: tabAction('new') },
+        { label: '关闭当前标签', accelerator: 'CmdOrCtrl+Shift+W', click: tabAction('close') },
+        { label: '恢复关闭的标签', accelerator: 'CmdOrCtrl+Shift+T', click: tabAction('reopen') },
+        { type: 'separator' },
+        { label: '下一个标签', click: tabAction('next') },
+        { label: '上一个标签', click: tabAction('prev') },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { label: '重新加载当前标签', accelerator: 'CmdOrCtrl+R', click: tabAction('reload') },
+        { label: '页内查找', accelerator: 'CmdOrCtrl+F', click: openFindBar },
+        { type: 'separator' },
+        { label: '放大', click: () => zoomActive('in') },
+        { label: '缩小', click: () => zoomActive('out') },
+        { label: '重置缩放', click: () => zoomActive('reset') },
+        { type: 'separator' },
+        { label: '开发者工具', accelerator: 'F12', click: toggleDevTools },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        { label: '关于 DeepSeek', click: showAbout },
+        { label: '检查更新…', click: () => updater.checkForUpdates() },
+        { label: '项目主页', click: () => security.openExternalSafe('https://github.com/xmbl4399/deepseek-desktop') },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  log('[menu] application menu installed (zh-CN)');
+}
+
 function showMain() {
   if (!state.mainWindow || state.mainWindow.isDestroyed()) {
     createMainWindow();
@@ -287,13 +448,15 @@ function hideMain() {
   if (state.mainWindow && !state.mainWindow.isDestroyed()) state.mainWindow.hide();
 }
 
-// 卸载 DS 客户端:定位 NSIS 卸载程序,二次确认后运行(仅打包版有意义)
+// 卸载 DeepSeek:定位 NSIS 卸载程序,二次确认后运行(仅打包版有意义)
 function uninstallApp() {
   if (!app.isPackaged) {
     dialog.showMessageBox({ type: 'info', message: '开发模式下不支持卸载' }).catch(() => {});
     return;
   }
   const exeDir = path.dirname(process.execPath);
+  // 注意:这两个文件名来自安装目录实际产物(productName = "DeepSeek Desktop"),
+  // 与界面显示名 "DeepSeek" 无关,不要为了文案统一而改这里,否则会找不到卸载程序
   const candidates = [
     path.join(exeDir, 'Uninstall', 'DeepSeek Desktop.exe'),
     path.join(exeDir, 'Uninstall.exe'),
@@ -309,8 +472,8 @@ function uninstallApp() {
   dialog
     .showMessageBox({
       type: 'warning',
-      title: '卸载 DeepSeek Desktop',
-      message: '确定要卸载 DeepSeek Desktop 吗?',
+      title: '卸载 DeepSeek',
+      message: '确定要卸载 DeepSeek 吗?',
       detail: '将运行卸载程序,应用与本地数据将被移除。',
       buttons: ['确认卸载', '取消'],
       defaultId: 1,
@@ -326,7 +489,29 @@ function uninstallApp() {
     .catch(() => {});
 }
 
-// ---------------- UI 动作分发(悬浮球/浮框 → 主进程) ----------------
+// ---------------- 菜单上下文(托盘 + 悬浮球菜单共用的渲染依据) ----------------
+// 只描述"当前是什么状态",不决定"有哪些项" —— 项序/分组在 modules/menu-model.js。
+// 函数声明会提升,所以装配区(tray/ballMenu)可以先引用再定义。
+function menuContext() {
+  return {
+    mainVisible: !!(state.mainWindow && !state.mainWindow.isDestroyed() && state.mainWindow.isVisible()),
+    mode: mode.getDisplayMode(),
+    size: mode.getWidgetSize(),
+    mainOnTop: mode.getMainOnTop(),
+    foregroundAware: mode.getForegroundAware(),
+    autoStart: app.getLoginItemSettings().openAtLogin,
+    version: app.getVersion(),
+  };
+}
+
+// 打开数据目录(日志所在处;打包版是 %APPDATA%\deepseek-desktop,开发版是项目根)
+function openDataDir() {
+  const dir = app.isPackaged ? app.getPath('userData') : path.join(__dirname);
+  shell.openPath(dir).catch(() => {});
+  log('[ui] open data dir:', dir);
+}
+
+// ---------------- UI 动作分发(悬浮球/浮框/托盘共用) ----------------
 function onUiAction(name, payload) {
   log('[ui:action]', name, payload);
   // 任何动作都先关掉自绘右键菜单(菜单项点击后菜单应消失)
@@ -346,7 +531,16 @@ function onUiAction(name, payload) {
       }
       break;
     case 'ball-menu':
-      ballMenu.showBallMenu(payload, mode.getDisplayMode());
+      ballMenu.showBallMenu(payload);
+      break;
+    case 'menu-close':
+      // 自绘菜单按 Esc:窗口已在上方统一关闭,这里不做别的(不能落到 default 报未知动作)
+      break;
+    case 'size-small':
+    case 'size-medium':
+    case 'size-large':
+      // 尺寸档位(托盘子菜单 / 悬浮球菜单共用同一动作 id)
+      actions.setWidgetSize(name.slice(5));
       break;
     case 'screenshot':
       // 截图提问(悬浮右键菜单/托盘):选区框选 → 剪贴板 → 新标签自动粘贴
@@ -381,14 +575,60 @@ function onUiAction(name, payload) {
       // 壳层上报当前活动标签(切换/新建标签时),截图粘贴以此定位
       activeWcId = payload && payload.id ? payload.id : null;
       break;
-    case 'toggle-main-top':
-      // 主窗置顶:主窗内按钮/托盘共用(mode 持久化 + 广播给壳按钮 + 刷新托盘勾选)
-      mode.setMainOnTop(!mode.getMainOnTop());
+    case 'find':
+      // 壳层查找条输入 → 当前标签页内查找
+      findInActive(payload && payload.text, {
+        forward: payload && payload.backward ? false : true,
+        findNext: !!(payload && payload.findNext),
+      });
+      break;
+    case 'find-close':
+      closeFindBar();
+      break;
+    case 'copy-text':
+      // 壳层复制到剪贴板(标签标题等;渲染层 navigator.clipboard 在 file:// 下不可靠)
+      clipboard.writeText(String((payload && payload.text) || ''));
+      log('[ui] copy-text len=', String((payload && payload.text) || '').length);
+      break;
+    case 'zoom':
+      zoomActive(payload && payload.dir);
+      break;
+    case 'about':
+      showAbout();
+      break;
+    case 'toggle-main-top': {
+      // 主窗置顶:主窗内按钮/两个菜单共用(mode 持久化 + 广播给壳按钮 + 刷新托盘勾选)。
+      // 勾选值优先取渲染层回传的"目标值"(原生 checkbox 会给出),没有则按当前状态取反 ——
+      // 这样自绘菜单(只发意图)与原生菜单(发目标值)能共用同一分支
+      const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !mode.getMainOnTop();
+      mode.setMainOnTop(next);
       if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-        state.mainWindow.setAlwaysOnTop(mode.getMainOnTop());
+        state.mainWindow.setAlwaysOnTop(next);
       }
       broadcastMainTop();
       tray.refresh();
+      break;
+    }
+    case 'toggle-foreground': {
+      // 前台感知开关:关 = 完全不读取前台窗口(全屏自动隐藏与前台上下文动画同时失效)
+      const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !mode.getForegroundAware();
+      actions.setForegroundAware(next);
+      tray.refresh();
+      break;
+    }
+    case 'toggle-autostart': {
+      const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !app.getLoginItemSettings().openAtLogin;
+      // 显式传 path:Windows 下 get 判定注册表值是否等于 exe 路径,不传时两者可能不一致导致状态误判
+      app.setLoginItemSettings({ openAtLogin: next, path: process.execPath });
+      log('[settings] autoStart =', next, '-> registry now:', app.getLoginItemSettings().openAtLogin);
+      tray.refresh();
+      break;
+    }
+    case 'uninstall':
+      uninstallApp();
+      break;
+    case 'open-data-dir':
+      openDataDir();
       break;
     case 'toggle-mode':
       // 右键菜单"切换显示模式"(旧项兜底):悬浮球 ↔ 鲸鱼娘 循环
@@ -396,12 +636,17 @@ function onUiAction(name, payload) {
       break;
     case 'mode-ball':
       mode.setDisplayMode('ball');
+      tray.refresh();
       break;
     case 'mode-pet':
       mode.setDisplayMode('pet');
+      tray.refresh();
       break;
     case 'mode-off':
+      // 关闭显示 = 桌宠窗口全部销毁,用户会瞬间失去所有入口 → 弹一次系统气泡告知怎么找回
       mode.setDisplayMode('off');
+      tray.refresh();
+      tray.notify('桌宠已隐藏', '右键托盘图标 → 桌宠显示,可重新显示悬浮球或鲸鱼娘。');
       break;
     case 'pet-drag':
       // 鲸鱼娘拖拽锁:拖拽期间强制穿透关闭,防快速甩动闪断
@@ -426,7 +671,7 @@ function onUiAction(name, payload) {
   }
 }
 
-// ---------------- 动作集合(供托盘/快捷键使用) ----------------
+// ---------------- 动作集合(供快捷键/内部调用;菜单项统一走上面的 onUiAction) ----------------
 const actions = {
   showMain,
   hideMain,
@@ -456,15 +701,25 @@ const actions = {
   getMainOnTop: () => mode.getMainOnTop(),
   // 截图提问(悬浮右键菜单/托盘):选区框选 → 剪贴板 → 新标签自动粘贴
   startScreenshot: () => screenshot.startScreenshot(),
-  // 卸载 DS 客户端(托盘菜单,二次确认后运行卸载程序)
+  // 卸载 DeepSeek(托盘菜单,二次确认后运行卸载程序)
   uninstallApp: () => uninstallApp(),
+  // 页内查找 / 缩放 / 开发者工具 / 关于(快捷键与应用菜单共用)
+  openFind: () => openFindBar(),
+  zoom: (dir) => zoomActive(dir),
+  toggleDevTools: () => toggleDevTools(),
+  showAbout: () => showAbout(),
 };
 
 // 前台感知开关的联动句柄(whenReady 内注册):开=启动前台轮询,关=停止且不再采集
 let fgToggleHandler = null;
 
 // 托盘与快捷键依赖 actions,须在 actions 定义后实例化
-const tray = require('./modules/tray').create({ log, state, actions });
+const tray = require('./modules/tray').create({
+  log,
+  state,
+  onMenuAction: onUiAction,      // 托盘菜单项与悬浮球菜单走同一个动作入口
+  getMenuContext: menuContext,
+});
 shortcutsApi = require('./modules/shortcuts').create({ log, state, actions });
 
 // 每个 webview 标签页:挂导航守卫 + 离线兜底 + 窗口内快捷键(快捷键转发到壳层管理标签)
@@ -473,10 +728,27 @@ let activeWcId = null;        // 当前活动标签的 webContents.id(壳层 tab
 app.on('web-contents-created', (_e, wc) => {
   if (wc.getType() !== 'webview') return;
   webviewWcs.set(wc.id, wc);
-  wc.once('destroyed', () => webviewWcs.delete(wc.id));
+  wc.once('destroyed', () => {
+    webviewWcs.delete(wc.id);
+    zoomLevels.delete(wc.id);
+    selectionSnapshots.delete(wc.id);
+  });
   const fakeWin = { webContents: wc };
   security.attachNavigationGuard(fakeWin, 'webview');
   offline.attachOfflineFallback(fakeWin, 'webview');
+  // 右键/长按触摸菜单:Electron 不提供网页内容默认菜单,必须自己注册(选中文字才有"复制")
+  contextMenu.attach(wc, 'webview#' + wc.id);
+  // 页内查找结果数回传壳层(查找条显示 3/12)
+  wc.on('found-in-page', (_ev, result) => {
+    if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
+    try {
+      state.mainWindow.webContents.send('find-result', {
+        matches: result.matches,
+        active: result.activeMatchOrdinal,
+        final: result.finalUpdate,
+      });
+    } catch (e) { /* ignore */ }
+  });
   if (shortcutsApi && state.mainWindow && !state.mainWindow.isDestroyed()) {
     shortcutsApi.register(wc, state.mainWindow.webContents);
   }
@@ -489,11 +761,19 @@ app.on('web-contents-created', (_e, wc) => {
 // webview 外部链接通道(webview-preload 转发)
 ipcMain.on('webview:open-external', (_e, url) => security.openExternalSafe(url));
 
+// webview 手势起点选区快照(webview-preload 在 pointerdown 时上报)
+ipcMain.on('webview:selection-snapshot', (e, text) => {
+  if (!e.sender || e.sender.isDestroyed()) return;
+  selectionSnapshots.set(e.sender.id, { text: String(text || ''), at: Date.now() });
+});
+
 // ---------------- 生命周期 ----------------
 app.whenReady().then(() => {
   if (!gotLock) return; // 未拿到单实例锁,等待退出
 
   mode.loadMode(); // 同步读持久化的显示模式(必须在建窗前)
+  // 中文应用菜单(替换 Electron 英文默认菜单;编辑类 role 兼作 webview 剪贴板加速键)
+  setupAppMenu();
   // 开机启动默认开:仅首次启动(打包版)自动设置,记录标记后不再干预(用户可托盘关闭)
   if (app.isPackaged && !mode.isAutoStartInit()) {
     app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
@@ -507,6 +787,16 @@ app.whenReady().then(() => {
   updater.setupAutoUpdater();
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));
+
+  // 自绘菜单折叠组展开/收起 → 内容尺寸变了,按锚点重设菜单窗口。
+  // 单独走一条通道而不是复用 ui:action:onUiAction 会先关掉菜单窗口(那是"菜单项被点击"的语义),
+  // 而展开折叠组只是改布局,菜单必须留在原地。sender 校验防止其它窗口冒用。
+  ipcMain.on('ui:resize', (e, w, h) => {
+    if (!state.menuWindow || state.menuWindow.isDestroyed()) return;
+    if (e.sender !== state.menuWindow.webContents) return;
+    const at = ballMenu.fitMenu(w, h);
+    log('[ball-menu] resize ->', [w, h], at && [at.x, at.y]);
+  });
 
   // 启动即显示主窗口(唯一对话入口;默认右半屏居中 640x480)
   showMain();

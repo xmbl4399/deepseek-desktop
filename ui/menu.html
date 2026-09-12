@@ -11,6 +11,9 @@
     --mi-fg: #e8eaf6;
     --mi-hover-bg: rgba(77, 107, 254, 0.35);
     --mi-hover-fg: #fff;
+    --mi-off-fg: rgba(232, 234, 246, 0.34);
+    --cap-fg: rgba(232, 234, 246, 0.45);
+    --tick-fg: #4d6bfe;
     --sep-bg: rgba(255, 255, 255, 0.1);
   }
   @media (prefers-color-scheme: light) {
@@ -20,6 +23,9 @@
       --mi-fg: #2b3045;
       --mi-hover-bg: rgba(77, 107, 254, 0.18);
       --mi-hover-fg: #1a1f3a;
+      --mi-off-fg: rgba(43, 48, 69, 0.35);
+      --cap-fg: rgba(43, 48, 69, 0.5);
+      --tick-fg: #3b57d6;
       --sep-bg: rgba(0, 0, 0, 0.1);
     }
   }
@@ -29,38 +35,72 @@
     background: var(--menu-bg);
     border: 1px solid var(--menu-border);
     border-radius: 10px;
-    padding: 4px;
-    width: fit-content;
+    padding: 5px;
+    /* 定宽:折叠组展开/收起会改变内容宽度,窗口跟着 fit-content 会让菜单左右跳 */
+    width: 170px;
   }
+  /* 行高 ~36px(原 26px):触摸点选更容易命中 */
   .mi {
-    padding: 7px 14px;
+    display: flex;
+    align-items: center;
+    padding: 9px 14px 9px 10px;
     border-radius: 6px;
-    font-size: 12px;
+    font-size: 13px;
+    line-height: 1.2;
     color: var(--mi-fg);
     cursor: pointer;
     white-space: nowrap;
   }
-  .mi:hover { background: var(--mi-hover-bg); color: var(--mi-hover-fg); }
+  .mi:hover, .mi.hover { background: var(--mi-hover-bg); color: var(--mi-hover-fg); }
+  .mi.disabled { color: var(--mi-off-fg); cursor: default; }
+  .mi.disabled:hover, .mi.disabled.hover { background: transparent; color: var(--mi-off-fg); }
   .mi.danger { color: #ff8a8a; }
-  .mi.danger:hover { background: rgba(255, 80, 80, 0.22); color: #ffb0b0; }
-  /* 显示模式三项:勾选标记占位,当前模式打勾 */
-  .mi-mode .tick { display: inline-block; width: 14px; margin-right: 4px; color: #4d6bfe; }
-  .mi-mode:not(.checked) .tick { visibility: hidden; }
-  .mi-mode .tick::after { content: '✓'; }
-  .sep { height: 1px; margin: 4px 6px; background: var(--sep-bg); }
+  .mi.danger:hover, .mi.danger.hover { background: rgba(255, 80, 80, 0.22); color: #ffb0b0; }
+  /* 勾选槽:所有项都占位,保证文字左对齐一致(与原生菜单同款做法) */
+  .mi .tick { display: inline-block; width: 17px; flex: none; color: var(--tick-fg); }
+  .mi:not(.checked) .tick { visibility: hidden; }
+  .mi .tick::after { content: '✓'; }
+  /* 折叠组:父行文字撑开,箭头贴右(与原生菜单的子菜单指示一致) */
+  .mi .grow { flex: 1 1 auto; }
+  /* 箭头用边框画三角:字符 ▸ 只有几个像素的细三角,触摸用户根本看不清 */
+  .mi.parent .arrow {
+    flex: none;
+    margin-left: 12px;
+    width: 0;
+    height: 0;
+    opacity: 0.62;
+    border: 0 solid transparent;
+    border-left: 8px solid currentColor; /* ▸ 收起 */
+    border-top-width: 5.5px;
+    border-bottom-width: 5.5px;
+  }
+  .mi.parent:hover .arrow, .mi.parent.hover .arrow { opacity: 1; }
+  .subwrap.open .mi.parent .arrow { /* ▾ 展开 */
+    border-left-width: 5.5px;
+    border-left-color: transparent;
+    border-right-width: 5.5px;
+    border-right-color: currentColor;
+    border-top-width: 8px;
+    border-bottom-width: 0;
+  }
+  /* 子项容器:默认收起(初始高度只算父行一行),展开时才铺开 */
+  .sub { display: none; }
+  .subwrap.open .sub { display: block; }
+  /* 展开后整体右缩进 + 左侧引导线:层级关系一眼可见(也避免触摸时误点到父行) */
+  .sub {
+    margin-left: 12px;
+    padding-left: 5px;
+    border-left: 1px solid var(--sep-bg);
+  }
+  .sub .mi { padding-left: 10px; }
+  /* 分组小标题(自绘菜单没有原生子菜单,仍有 caption 的分组用它表意) */
+  .cap { font-size: 11px; color: var(--cap-fg); padding: 7px 10px 3px; }
+  .sep { height: 1px; margin: 5px 6px; background: var(--sep-bg); }
 </style>
 </head>
 <body>
-  <div class="menu">
-    <div class="mi" data-act="main">打开主窗口</div>
-    <div class="mi" data-act="screenshot">截图提问</div>
-    <div class="sep"></div>
-    <div class="mi mi-mode" data-act="mode-ball"><span class="tick"></span>悬浮球</div>
-    <div class="mi mi-mode" data-act="mode-pet"><span class="tick"></span>鲸鱼娘</div>
-    <div class="mi mi-mode" data-act="mode-off"><span class="tick"></span>关闭显示</div>
-    <div class="sep"></div>
-    <div class="mi danger" data-act="quit">退出</div>
-  </div>
+  <!-- 菜单项由 menu.js 依据主进程下发的模型动态生成(项序/分组唯一来源 = modules/menu-model.js) -->
+  <div class="menu" id="menu"></div>
   <script src="menu.js"></script>
 </body>
 </html>

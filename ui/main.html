@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
+<title>DeepSeek</title>
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:">
 <style>
   /* 主题变量:跟随系统深/浅色 */
@@ -26,16 +27,18 @@
     }
   }
   * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+  /* 输入类元素必须可选中(全局 user-select: none 会让查找条无法选中/复制) */
+  input, textarea { user-select: text; -webkit-user-select: text; }
   html, body { height: 100%; overflow: hidden; background: var(--bar-bg); }
-  /* 标签栏 */
+  /* 标签栏:高度/行高按 Windows 平板触摸目标(≥34px)设计,不再用桌面鼠标的 26px */
   #tabbar {
     display: flex;
     align-items: center;
-    height: 34px;
+    height: 46px;
     background: var(--bar-bg);
     border-bottom: 1px solid var(--bar-border);
-    padding: 0 4px;
-    gap: 4px;
+    padding: 0 6px;
+    gap: 6px;
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -43,14 +46,14 @@
   .tab {
     display: flex;
     align-items: center;
-    gap: 6px;
-    min-width: 90px;
-    max-width: 180px;
-    height: 26px;
-    padding: 0 8px 0 10px;
-    border-radius: 7px;
+    gap: 8px;
+    min-width: 110px;
+    max-width: 220px;
+    height: 36px;
+    padding: 0 6px 0 12px;
+    border-radius: 9px;
     color: var(--bar-fg);
-    font-size: 12px;
+    font-size: 13px;
     cursor: pointer;
     white-space: nowrap;
     background: transparent;
@@ -58,17 +61,28 @@
   .tab:hover { background: var(--bar-hover); }
   .tab.active { background: var(--bar-active); color: var(--bar-fg); }
   .tab-title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-  .tab-close { color: var(--bar-plus); font-size: 13px; line-height: 1; padding: 1px 3px; border-radius: 4px; }
+  .tab-close {
+    flex: none;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--bar-plus);
+    font-size: 15px;
+    line-height: 1;
+    border-radius: 6px;
+  }
   .tab-close:hover { background: rgba(255, 80, 80, 0.25); color: #ff8a8a; }
   #tab-add {
     flex-shrink: 0;
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
     border: none;
     background: transparent;
     color: var(--bar-plus);
-    font-size: 16px;
+    font-size: 20px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -80,13 +94,13 @@
   #tab-pin {
     flex-shrink: 0;
     margin-left: auto; /* 推到标签栏最右 */
-    width: 26px;
-    height: 26px;
-    border-radius: 7px;
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
     border: none;
     background: transparent;
     color: var(--bar-plus);
-    font-size: 14px;
+    font-size: 19px;
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -96,8 +110,8 @@
   }
   #tab-pin:hover { background: var(--bar-hover); opacity: 1; }
   #tab-pin.active { opacity: 1; color: #4d6bfe; background: var(--bar-active); }
-  /* 内容区:webview 铺满 */
-  #views { position: absolute; inset: 34px 0 0 0; background: var(--view-bg); }
+  /* 内容区:webview 铺满(inset 顶部必须与 #tabbar 高度一致) */
+  #views { position: absolute; inset: 46px 0 0 0; background: var(--view-bg); }
   webview.tab-view {
     position: absolute;
     inset: 0;
@@ -109,7 +123,7 @@
   /* 截图提问提示条 */
   #toast {
     position: absolute;
-    top: 42px;
+    top: 54px;
     left: 50%;
     transform: translateX(-50%);
     max-width: 80%;
@@ -125,6 +139,93 @@
     pointer-events: none;
   }
   #toast.show { opacity: 1; }
+  /* 页内查找条(Ctrl+F):作用于当前标签 */
+  #findbar {
+    position: absolute;
+    top: 54px;
+    right: 8px;
+    z-index: 20;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: var(--bar-active);
+    border: 1px solid var(--bar-border);
+  }
+  #findbar.show { display: flex; }
+  #find-input {
+    width: 190px;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid var(--bar-border);
+    border-radius: 6px;
+    background: var(--bar-bg);
+    color: var(--bar-fg);
+    font-size: 13px;
+    outline: none;
+  }
+  #find-input::placeholder { color: var(--bar-plus); }
+  #find-count { min-width: 46px; text-align: center; color: var(--bar-plus); font-size: 11px; }
+  .find-btn {
+    width: 30px;
+    height: 30px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--bar-plus);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .find-btn:hover { background: var(--bar-hover); color: var(--bar-fg); }
+  /* 标签栏右键菜单(壳层自绘;网页内容的右键菜单由主进程承接) */
+  #tabmenu {
+    position: absolute;
+    z-index: 30;
+    display: none;
+    min-width: 134px;
+    padding: 4px;
+    border-radius: 8px;
+    background: var(--bar-active);
+    border: 1px solid var(--bar-border);
+  }
+  #tabmenu.show { display: block; }
+  #tabmenu .mi {
+    padding: 9px 12px;
+    border-radius: 6px;
+    color: var(--bar-fg);
+    font-size: 13px;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  #tabmenu .mi:hover { background: var(--bar-hover); }
+  #tabmenu .mi.off { color: var(--bar-plus); opacity: 0.5; cursor: default; }
+  #tabmenu .mi.off:hover { background: transparent; }
+  /* 标签页崩溃/无响应兜底 */
+  .tab-crash {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    background: var(--view-bg);
+    color: #444441;
+    font-size: 13px;
+  }
+  .tab-crash.show { display: flex; }
+  .tab-crash button {
+    padding: 6px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #4d6bfe;
+    color: #ffffff;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .tab.dragging { opacity: 0.45; }
 </style>
 </head>
 <body>
@@ -134,6 +235,14 @@
   </div>
   <div id="views"></div>
   <div id="toast"></div>
+  <div id="findbar">
+    <input id="find-input" type="text" placeholder="在当前页面中查找" spellcheck="false">
+    <span id="find-count"></span>
+    <button class="find-btn" id="find-prev" title="上一个 (Shift+Enter)">↑</button>
+    <button class="find-btn" id="find-next" title="下一个 (Enter)">↓</button>
+    <button class="find-btn" id="find-close" title="关闭 (Esc)">✕</button>
+  </div>
+  <div id="tabmenu"></div>
   <script src="main.js"></script>
 </body>
 </html>
