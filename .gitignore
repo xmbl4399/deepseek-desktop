@@ -124,6 +124,8 @@ dist
 
 # Electron build output
 release/
+# 备用输出目录(项目目录被杀软持句柄时用 --config.directories.output 指到这里)
+release-build/
 
 # yarn v2
 .yarn/cache
