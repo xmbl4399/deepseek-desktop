@@ -8,6 +8,13 @@ const path = require('path');
 // 注意:此项不影响 app.getName()/userData 路径(改 userData 目录会导致登录态与设置丢失,本项目不做)
 app.setAppUserModelId('com.deepseek.desktop');
 
+// 开机启动注册表值名(HKCU\...\CurrentVersion\Run 下的值名)。
+// 必须与 electron-builder 打包期按 productName 生成的 electron.app.<productName> 完全一致,
+// 否则运行期 setLoginItemSettings 默认取 AppUserModelId(com.deepseek.desktop) 建项,
+// 与安装器写的 electron.app.DeepSeek Desktop 并存 ⇒ 开机拉起两份实例(6 进程 / 421MB)。
+// 显式传 name 即可对齐,无需改 app.getName()(那会连带改 userData 目录,丢登录态与设置)。
+const AUTOSTART_REG_NAME = 'electron.app.DeepSeek Desktop';
+
 // ---------------- 模块装配 ----------------
 const { log } = require('./modules/logger');
 const state = require('./modules/state');
@@ -492,6 +499,17 @@ function uninstallApp() {
 // ---------------- 菜单上下文(托盘 + 悬浮球菜单共用的渲染依据) ----------------
 // 只描述"当前是什么状态",不决定"有哪些项" —— 项序/分组在 modules/menu-model.js。
 // 函数声明会提升,所以装配区(tray/ballMenu)可以先引用再定义。
+
+// 读取开机启动状态。必须带上 name 查询,否则 get 会去读 AppUserModelId 对应的值名,
+// 而实际生效的那条是 electron.app.DeepSeek Desktop ⇒ 会永远读到 false,托盘勾选状态错乱。
+function isAutoStartOn() {
+  try {
+    return !!app.getLoginItemSettings({ path: process.execPath, name: AUTOSTART_REG_NAME }).openAtLogin;
+  } catch (e) {
+    return false;
+  }
+}
+
 function menuContext() {
   return {
     mainVisible: !!(state.mainWindow && !state.mainWindow.isDestroyed() && state.mainWindow.isVisible()),
@@ -499,7 +517,7 @@ function menuContext() {
     size: mode.getWidgetSize(),
     mainOnTop: mode.getMainOnTop(),
     foregroundAware: mode.getForegroundAware(),
-    autoStart: app.getLoginItemSettings().openAtLogin,
+    autoStart: isAutoStartOn(),
     version: app.getVersion(),
   };
 }
@@ -617,10 +635,11 @@ function onUiAction(name, payload) {
       break;
     }
     case 'toggle-autostart': {
-      const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !app.getLoginItemSettings().openAtLogin;
+      const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !isAutoStartOn();
       // 显式传 path:Windows 下 get 判定注册表值是否等于 exe 路径,不传时两者可能不一致导致状态误判
-      app.setLoginItemSettings({ openAtLogin: next, path: process.execPath });
-      log('[settings] autoStart =', next, '-> registry now:', app.getLoginItemSettings().openAtLogin);
+      // 显式传 name:把值名钉死在 electron.app.DeepSeek Desktop,与安装器写入项合流(详见文件头常量注释)
+      app.setLoginItemSettings({ openAtLogin: next, path: process.execPath, name: AUTOSTART_REG_NAME });
+      log('[settings] autoStart =', next, '-> registry now:', isAutoStartOn());
       tray.refresh();
       break;
     }
@@ -767,6 +786,34 @@ ipcMain.on('webview:selection-snapshot', (e, text) => {
   selectionSnapshots.set(e.sender.id, { text: String(text || ''), at: Date.now() });
 });
 
+// 清理历史遗留的重复自启项(≤1.1.3 版本会同时写入 AppUserModelId 与 productName 两条值名)。
+// 仅在打包版执行;只删"值名 = 本应用 appId"这一条,不动 electron.app.* 那条 —— 保证开机启动仍然有效,
+// 只是不再被拉起第二次。删完把生效状态重新写回目标值名,避免用户原本"关着自启"却被清理动作打开。
+function cleanupLegacyAutostart() {
+  if (!app.isPackaged || process.platform !== 'win32') return;
+  const legacyName = 'com.deepseek.desktop';
+  if (legacyName === AUTOSTART_REG_NAME) return;
+  let legacyOn = false;
+  try {
+    legacyOn = !!app.getLoginItemSettings({ path: process.execPath, name: legacyName }).openAtLogin;
+  } catch (e) { /* 探测失败:当作没有遗留项 */ }
+  // 先读目标项当前状态,再删遗留项,最后按目标项状态重新落一次(幂等)
+  const keepOn = isAutoStartOn() || legacyOn;
+  try {
+    app.setLoginItemSettings({ openAtLogin: keepOn, path: process.execPath, name: AUTOSTART_REG_NAME });
+  } catch (e) {
+    log('[settings] 对齐自启项失败:', e.message);
+  }
+  if (legacyOn) {
+    try {
+      app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, name: legacyName });
+      log('[settings] 已清理遗留自启项:', legacyName, '-> 保留', AUTOSTART_REG_NAME, '=', keepOn);
+    } catch (e) {
+      log('[settings] 清理遗留自启项失败:', e.message);
+    }
+  }
+}
+
 // ---------------- 生命周期 ----------------
 app.whenReady().then(() => {
   if (!gotLock) return; // 未拿到单实例锁,等待退出
@@ -776,9 +823,10 @@ app.whenReady().then(() => {
   setupAppMenu();
   // 开机启动默认开:仅首次启动(打包版)自动设置,记录标记后不再干预(用户可托盘关闭)
   if (app.isPackaged && !mode.isAutoStartInit()) {
-    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
+    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath, name: AUTOSTART_REG_NAME });
     mode.markAutoStartInit();
   }
+  cleanupLegacyAutostart(); // 合并历史遗留的重复项(只删 appId 那条)
   tray.createTray();
   // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)
   floating.setWidgetSize(mode.getWidgetSize());
