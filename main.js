@@ -8,12 +8,16 @@ const path = require('path');
 // 注意:此项不影响 app.getName()/userData 路径(改 userData 目录会导致登录态与设置丢失,本项目不做)
 app.setAppUserModelId('com.deepseek.desktop');
 
-// 开机启动注册表值名(HKCU\...\CurrentVersion\Run 下的值名)。
-// 必须与 electron-builder 打包期按 productName 生成的 electron.app.<productName> 完全一致,
-// 否则运行期 setLoginItemSettings 默认取 AppUserModelId(com.deepseek.desktop) 建项,
-// 与安装器写的 electron.app.DeepSeek Desktop 并存 ⇒ 开机拉起两份实例(6 进程 / 421MB)。
-// 显式传 name 即可对齐,无需改 app.getName()(那会连带改 userData 目录,丢登录态与设置)。
-const AUTOSTART_REG_NAME = 'electron.app.DeepSeek Desktop';
+// 开机启动注册表值名 = AppUserModelId(见上方 setAppUserModelId ⇒ com.deepseek.desktop)。
+// ⚠️ Electron 在 Windows 上 Set/Get 的口径【不对称】(v43.3.0 browser_win.cc 实测确认):
+//   Set: 值名 = options.name || GetAppUserModelID()
+//   Get: 判定 openAtLogin 时【固定只读 GetAppUserModelID()】,options.name 被完全忽略
+//   ⇒ 一旦 Set 传了 name,读回永远是 false:托盘勾选状态永远不亮,下游还会把"读到的 false"当依据。
+// 因此这里【一律不传 name】,让 Set/Get 落在同一个值名上。
+// (已实测:electron-builder 26.15.3 的 NSIS 模板全文不碰 Run 键,安装器不会另写一条,
+//  故不存在"不传 name 会并存两份实例"的顾虑;electron.app.Twinkle Tray 那种项是应用运行期自己写的。)
+// 历史版本(≤1.1.4)写过的值名由 migrateAutostart() 迁移过来。
+const LEGACY_AUTOSTART_REG_NAME = 'electron.app.DeepSeek Desktop';
 
 // ---------------- 模块装配 ----------------
 const { log } = require('./modules/logger');
@@ -500,11 +504,11 @@ function uninstallApp() {
 // 只描述"当前是什么状态",不决定"有哪些项" —— 项序/分组在 modules/menu-model.js。
 // 函数声明会提升,所以装配区(tray/ballMenu)可以先引用再定义。
 
-// 读取开机启动状态。必须带上 name 查询,否则 get 会去读 AppUserModelId 对应的值名,
-// 而实际生效的那条是 electron.app.DeepSeek Desktop ⇒ 会永远读到 false,托盘勾选状态错乱。
+// 读取开机启动状态。⚠️ 不能传 name:Windows 下 get 的 openAtLogin 固定读 AppUserModelId 值名,
+// 传 name 会被忽略 ⇒ 永远读回 false(1.1.4 托盘勾选"勾不上"的根源,详见文件头常量注释)。
 function isAutoStartOn() {
   try {
-    return !!app.getLoginItemSettings({ path: process.execPath, name: AUTOSTART_REG_NAME }).openAtLogin;
+    return !!app.getLoginItemSettings({ path: process.execPath }).openAtLogin;
   } catch (e) {
     return false;
   }
@@ -636,9 +640,8 @@ function onUiAction(name, payload) {
     }
     case 'toggle-autostart': {
       const next = payload && typeof payload.checked === 'boolean' ? payload.checked : !isAutoStartOn();
-      // 显式传 path:Windows 下 get 判定注册表值是否等于 exe 路径,不传时两者可能不一致导致状态误判
-      // 显式传 name:把值名钉死在 electron.app.DeepSeek Desktop,与安装器写入项合流(详见文件头常量注释)
-      app.setLoginItemSettings({ openAtLogin: next, path: process.execPath, name: AUTOSTART_REG_NAME });
+      // 只传 path,不传 name —— 值名走 AppUserModelId,与 get 的读取口径保持一致(详见文件头常量注释)
+      app.setLoginItemSettings({ openAtLogin: next, path: process.execPath });
       log('[settings] autoStart =', next, '-> registry now:', isAutoStartOn());
       tray.refresh();
       break;
@@ -786,31 +789,31 @@ ipcMain.on('webview:selection-snapshot', (e, text) => {
   selectionSnapshots.set(e.sender.id, { text: String(text || ''), at: Date.now() });
 });
 
-// 清理历史遗留的重复自启项(≤1.1.3 版本会同时写入 AppUserModelId 与 productName 两条值名)。
-// 仅在打包版执行;只删"值名 = 本应用 appId"这一条,不动 electron.app.* 那条 —— 保证开机启动仍然有效,
-// 只是不再被拉起第二次。删完把生效状态重新写回目标值名,避免用户原本"关着自启"却被清理动作打开。
-function cleanupLegacyAutostart() {
+// 迁移历史遗留的自启项(≤1.1.4 写在 electron.app.DeepSeek Desktop 值名上,现已改用 AppUserModelId)。
+// ⚠️ 旧实现的名字叫 cleanupLegacyAutostart,它在这里【无条件】执行了一次
+//   setLoginItemSettings({ openAtLogin: keepOn, name: 'electron.app.DeepSeek Desktop' }),
+//   而 keepOn 取自当时恒为 false 的 isAutoStartOn() ⇒ openAtLogin 传 false = 删除该注册表值,
+//   于是每次启动都把自启项(含用户刚在托盘勾上的)抹掉,开机启动 100% 失效 —— 这是主因,已删除该写法。
+// 现在:先探测旧项是否存在(launchItems 是 Electron 遍历 HKCU/HKLM Run 键的结果,带值名),
+//      只有确实存在才迁移,否则【什么都不做】,绝不写回。
+function migrateAutostart() {
   if (!app.isPackaged || process.platform !== 'win32') return;
-  const legacyName = 'com.deepseek.desktop';
-  if (legacyName === AUTOSTART_REG_NAME) return;
-  let legacyOn = false;
+  let legacy = null;
   try {
-    legacyOn = !!app.getLoginItemSettings({ path: process.execPath, name: legacyName }).openAtLogin;
-  } catch (e) { /* 探测失败:当作没有遗留项 */ }
-  // 先读目标项当前状态,再删遗留项,最后按目标项状态重新落一次(幂等)
-  const keepOn = isAutoStartOn() || legacyOn;
+    // ⚠️ path 必须带引号:launchItems 的路径匹配会过 CommandLine::FromString(options.path),
+    // 无引号时含空格的路径会被按空格截断(实测 "…\DeepSeek Desktop.exe" 变成 "…\DeepSeek"),
+    // 于是匹配不上注册表里那条带引号的值、探测恒为空。openAtLogin 的判定不受此影响(那边自行补引号)。
+    const items = app.getLoginItemSettings({ path: '"' + process.execPath + '"' }).launchItems || [];
+    legacy = items.find((i) => i.name === LEGACY_AUTOSTART_REG_NAME) || null;
+  } catch (e) { /* 探测失败:当作没有旧项,不做任何改动 */ }
+  if (!legacy) return;
   try {
-    app.setLoginItemSettings({ openAtLogin: keepOn, path: process.execPath, name: AUTOSTART_REG_NAME });
+    // 注意 launchItems.enabled=false 表示用户在任务管理器禁用过 —— 尊重该状态,不代为打开
+    app.setLoginItemSettings({ openAtLogin: legacy.enabled !== false, path: process.execPath });
+    app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, name: LEGACY_AUTOSTART_REG_NAME });
+    log('[settings] 自启项已迁移:', LEGACY_AUTOSTART_REG_NAME, '-> AppUserModelId, enabled =', legacy.enabled !== false);
   } catch (e) {
-    log('[settings] 对齐自启项失败:', e.message);
-  }
-  if (legacyOn) {
-    try {
-      app.setLoginItemSettings({ openAtLogin: false, path: process.execPath, name: legacyName });
-      log('[settings] 已清理遗留自启项:', legacyName, '-> 保留', AUTOSTART_REG_NAME, '=', keepOn);
-    } catch (e) {
-      log('[settings] 清理遗留自启项失败:', e.message);
-    }
+    log('[settings] 自启项迁移失败:', e.message);
   }
 }
 
@@ -823,10 +826,10 @@ app.whenReady().then(() => {
   setupAppMenu();
   // 开机启动默认开:仅首次启动(打包版)自动设置,记录标记后不再干预(用户可托盘关闭)
   if (app.isPackaged && !mode.isAutoStartInit()) {
-    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath, name: AUTOSTART_REG_NAME });
+    app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
     mode.markAutoStartInit();
   }
-  cleanupLegacyAutostart(); // 合并历史遗留的重复项(只删 appId 那条)
+  migrateAutostart(); // 迁移历史遗留自启项(旧值名 -> AppUserModelId);无旧项时不做任何改动
   tray.createTray();
   // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)
   floating.setWidgetSize(mode.getWidgetSize());

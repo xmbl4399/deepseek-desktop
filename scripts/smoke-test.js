@@ -188,11 +188,11 @@ test('托盘菜单来自共用模型(项序/分组单一来源),弹出前重建�
   assert.ok(tray.includes("tray.on('right-click'"), '应在右键弹出前重建托盘菜单刷新状态');
   // 开机启动:显式传 path(Windows 下不传会因 exe 路径不一致误判状态)
   assert.ok(main.includes('path: process.execPath'), 'setLoginItemSettings 应显式传 path');
-  // 开机启动:显式传 name,把注册表值名钉死为 electron.app.<productName>,与安装器写入项合流。
-  // 不传时 Electron 默认取 AppUserModelId(com.deepseek.desktop),会与安装器那条并存 ⇒ 开机拉两份实例。
-  assert.ok(/AUTOSTART_REG_NAME\s*=\s*'electron\.app\./.test(main), '应定义与 productName 对齐的自启值名常量');
-  assert.ok(main.includes('name: AUTOSTART_REG_NAME'), 'setLoginItemSettings 应显式传 name');
-  assert.ok(main.includes('cleanupLegacyAutostart'), '应清理历史遗留的重复自启项');
+  // ⚠️ 自启项【不得】传 name:Windows 下 get 判定 openAtLogin 时固定读 AppUserModelId 值名,
+  // options.name 被忽略 ⇒ 传 name 会让状态永远读回 false、还让"清理"逻辑误删自启项(1.1.4 根因)。
+  assert.ok(!/\bAUTOSTART_REG_NAME\b/.test(main), 'setLoginItemSettings 不应再传 name(读写口径必须同为 AppUserModelId)');
+  assert.ok(main.includes('LEGACY_AUTOSTART_REG_NAME'), '应保留历史自启值名常量用于迁移');
+  assert.ok(main.includes('migrateAutostart'), '应迁移历史遗留的重复自启项');
   // 两个入口共用同一动作分发入口
   assert.ok(main.includes('onMenuAction: onUiAction'), '托盘菜单项应走主进程统一动作分发');
   assert.ok(main.includes('getMenuContext'), '缺少菜单上下文(项序渲染依据)');
