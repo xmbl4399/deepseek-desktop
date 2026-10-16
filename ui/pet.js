@@ -71,17 +71,71 @@ function applySize() {
 // ---------- 动画目录(全量 51 个素材) ----------
 const IDLE = '待机呼吸休闲';       // 主体待机
 const TURN = '东张西望';           // 转向(内容本身是"偏左看到偏右",播完翻转 facing)
-const ACTS = [                     // 随机动作池(全量 43 个)
-  '被落叶淹没', '被吓一跳', '超大伸懒腰', '吃白饭', '吃冰淇淋融化',
-  '吃晚餐', '吃午餐', '吃早餐', '吃Token', '吹气球', '打瞌睡被惊醒',
-  '大口吃零食', '动物环绕', '堆雪人', '放风筝', '哈欠连天', '鲸鱼吐泡泡特效',
-  '可爱宅舞', '蓝鲸现世', '女仆屈膝礼仪', '轻快记录', '轻快摇摆舞',
-  '深度思考碎碎念', '偷吃零食被抓住', '玩水枪', '玩游戏气急败坏',
-  '小幅度原地360度旋转展示', '小提琴演奏', '写代码', '摇扇纳凉',
-  '用鲸鱼尾巴拍打地面', '优雅女仆舞', '悠闲哼歌', '原地蹲下玩玩具汽车',
-  '原地敲击桌面互动', '原地跳跃抓碎头顶物品', '原地小憩沉眠',
-  '原地重力下蹲压缩', '原地专心玩魔方', '照镜子', '整体换装试色', '中秋赏月吃月饼',
+// 随机动作分类池(对齐上游 dsh-pet 的 categories 结构:分类 weighted,类内等概率)
+// weight 为相对权重,抽签时先按 weight 选分类,再在该类内等概率选动作。
+// noMirror: 该分类播放时不跟随 facing 镜像(文字类动画镜像后可读性反转)。
+const ACT_CATEGORIES = [
+  {
+    id: '小动作',
+    weight: 20,
+    actions: [
+      '悠闲哼歌', '超大伸懒腰', '原地敲击桌面互动', '原地重力下蹲压缩',
+      '哈欠连天', '原地小憩沉眠', '女仆屈膝礼仪', '被吓一跳',
+      '小幅度原地360度旋转展示', '偷吃零食被抓住', '用鲸鱼尾巴拍打地面',
+      '打瞌睡被惊醒', '照镜子', '整体换装试色', '轻快记录', '写代码',
+      '摇扇纳凉', '晨间刷牙',
+    ],
+  },
+  {
+    id: '玩耍',
+    weight: 20,
+    actions: [
+      '原地专心玩魔方', '原地蹲下玩玩具汽车', '鲸鱼吐泡泡特效',
+      '原地跳跃抓碎头顶物品', '玩游戏气急败坏', '玩水枪', '小提琴演奏',
+      '蓝鲸现世', '优雅女仆舞', '轻快摇摆舞', '可爱宅舞', '吹气球',
+      '动物环绕', '放风筝', '拆礼物', '变鸽子', '扑克魔术', '抽陀螺',
+      '吹笛子', '蝴蝶蜜蜂环绕头顶开花', '撸猫', '凭空生花', '骑木马',
+      '三球抛接', '踢毽子', '下五子棋', '荡秋千',
+    ],
+  },
+  {
+    id: '吃什么',
+    weight: 16,
+    actions: [
+      '吃白饭', '大口吃零食', '吃Token', '吃早餐', '吃午餐', '吃晚餐',
+      '吃冰淇淋融化', '吃大闸蟹', '吃糖葫芦', '吃长寿面', '吃西瓜', '涮火锅',
+    ],
+  },
+  {
+    id: '时节',
+    weight: 14,
+    actions: [
+      '被落叶淹没', '中秋赏月吃月饼', '堆雪人', '放烟花', '吃粽子', '吃年糕',
+      '吃青团', '吃腊八粥', '吃重阳糕', '收红包', '写福字', '穿针乞巧',
+      '舞狮头', '讨糖南瓜灯', '插茱萸赏菊', '放河灯', '萌化小幽灵',
+      '装点圣诞树', '放孔明灯', '吃汤圆', '吃饺子',
+    ],
+  },
+  {
+    id: '文字',
+    weight: 10,
+    noMirror: true,
+    actions: ['是啊，吃什么', '深度思考碎碎念'],
+  },
 ];
+
+// 分类权重合计。与 upstream config.jsonc 一致:100 - idle(10) - turn(5) - move(5) = 80
+const CATEGORY_WEIGHT_SUM = ACT_CATEGORIES.reduce((s, c) => s + c.weight, 0);
+
+// 全量动作池(扁平视图,供上下文偏好池等场景复用)
+const ACTS = ACT_CATEGORIES.reduce((acc, c) => acc.concat(c.actions), []);
+
+// 动作名 → 所属分类(判断 noMirror)
+const ACT_CATEGORY_OF = (() => {
+  const m = new Map();
+  for (const c of ACT_CATEGORIES) for (const a of c.actions) m.set(a, c);
+  return m;
+})();
 // 点击回应池拆两档:
 //   CLICK_RESPONSES = 专属"被戳一下"的回应(上游 点击回应-* 全 5 件 + 被吓一跳),
 //                     单击时优先从这一档选,保证戳一下总是"有回应"的语义;
@@ -123,11 +177,27 @@ const CONTEXT_ACTS = {
   explorer: ['照镜子', '轻快记录', '悠闲哼歌'],
 };
 
+// 按分类权重抽一个分类(weight 加权,类内等概率由 pickAct 处理)
+function pickCategory(exclude) {
+  const cats = exclude ? ACT_CATEGORIES.filter((c) => !c.actions.includes(exclude)) : ACT_CATEGORIES;
+  if (!cats.length) return null;
+  const total = cats.reduce((s, c) => s + c.weight, 0);
+  let roll = Math.random() * total;
+  for (const c of cats) {
+    roll -= c.weight;
+    if (roll < 0) return c;
+  }
+  return cats[cats.length - 1];
+}
+
 // 随机动作:按前台上下文提高特定动作概率
 function pickAct() {
   const pref = CONTEXT_ACTS[contextCategory];
   if (pref && pref.length && Math.random() < 0.6) return pick(pref, anim);
-  return pick(ACTS, anim);
+  // 上游语义:先按 weight 选分类,再在该分类内等概率选动作
+  const cat = pickCategory(anim);
+  if (!cat) return pick(ACTS, anim);
+  return pick(cat.actions, anim);
 }
 
 const pick = (pool, exclude) => {
@@ -352,6 +422,7 @@ function switchTo(next, nextOnce) {
   el.playsInline = true;
   el.onended = nextOnce ? handleEnded : undefined;
   el.load();
+  const pendingName = next; // 本帧动画名(pending 会在 onReady 里清空,镜像判定需独立保留)
 
   const onReady = () => {
     el.removeEventListener('loadeddata', onReady);
@@ -362,26 +433,31 @@ function switchTo(next, nextOnce) {
     front = front === 0 ? 1 : 0;
     pending = null;
     // facing 镜像:新视频按当前朝向设置,旧视频保持自己的 transform 淡出
-    el.style.transform = facing === 'right' ? 'scaleX(-1)' : '';
+    // noMirror 分类(如"文字"类,含可读文案)不做镜像,否则画面里文字会左右反转
+    const cat = ACT_CATEGORY_OF.get(pendingName || anim);
+    el.style.transform = facing === 'right' && !(cat && cat.noMirror) ? 'scaleX(-1)' : '';
     el.play().catch(() => {});
   };
   el.addEventListener('loadeddata', onReady);
   if (el.readyState >= 2) onReady();
 }
 
-// ---------- 动画链:播完按概率选下一个(30/10/40/20) ----------
+// ---------- 动画链:播完按权重选下一个 ----------
+// 权重对齐上游 config.jsonc 的 animationWeights:idle 10 / turn 5 / move 5,
+// 剩余 80 全给随机动作分类池(其内部再按分类 weight 加权)。
+const W_IDLE = 10;
+const W_TURN = 5;
+const W_ACT = CATEGORY_WEIGHT_SUM; // 80
+const W_MOVE = 5;
+const W_SUM = W_IDLE + W_TURN + W_ACT + W_MOVE; // 100
+
 function pickNext() {
-  const roll = Math.random();
+  let roll = Math.random() * W_SUM;
   let next = '';
-  if (roll < 0.3) {
-    next = IDLE;               // 30% 待机
-  } else if (roll < 0.4) {
-    next = TURN;               // 10% 转向
-  } else if (roll < 0.8) {
-    next = pickAct();            // 40% 随机动作(按前台上下文加权)
-  } else {
-    next = pick(MOVES);          // 20% 移动动画(原地奔跑,不移动窗口)
-  }
+  if ((roll -= W_IDLE) < 0) next = IDLE;
+  else if ((roll -= W_TURN) < 0) next = TURN;
+  else if ((roll -= W_ACT) < 0) next = pickAct();
+  else next = pick(MOVES);
   setAnim(next);
 }
 

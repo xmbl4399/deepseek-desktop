@@ -102,8 +102,22 @@ test('动画素材存在性:pet.js 引用的动画名都有对应 webm', () => {
     named.push({ name: m[1], where: c });
   }
   // 2) 动画池(点击回应已拆成 CLICK_RESPONSES + CLICK_FALLBACKS)
-  for (const pool of ['ACTS', 'CLICK_RESPONSES', 'CLICK_FALLBACKS', 'MOVES']) {
+  for (const pool of ['CLICK_RESPONSES', 'CLICK_FALLBACKS', 'MOVES']) {
     for (const n of arrayLiteral(pool)) named.push({ name: n, where: pool });
+  }
+  // 2b) ACT_CATEGORIES:嵌套结构(id/weight/noMirror + actions 数组),逐类取 actions
+  {
+    const m = src.match(/const\s+ACT_CATEGORIES\s*=\s*\[([\s\S]*?)\n\];/);
+    assert.ok(m, 'pet.js 缺少 ACT_CATEGORIES');
+    const catBlocks = m[1].split(/\n  \{\n/).slice(1);
+    assert.ok(catBlocks.length >= 5, `ACT_CATEGORIES 分类数异常(${catBlocks.length})`);
+    for (const b of catBlocks) {
+      const idm = b.match(/id:\s*'([^']+)'/);
+      const am = b.match(/actions:\s*\[([\s\S]*?)\]/);
+      assert.ok(idm && am, 'ACT_CATEGORIES 分类缺少 id/actions');
+      for (const x of am[1].matchAll(/'([^']*)'/g))
+        named.push({ name: x[1], where: `ACT_CATEGORIES.${idm[1]}` });
+    }
   }
   // 3) 上下文偏好 / 上下文动画 / 台词气泡键
   for (const n of quotedIn(/const\s+CONTEXT_ACTS\s*=\s*\{([\s\S]*?)\n\};/))
@@ -124,13 +138,31 @@ test('动画素材存在性:pet.js 引用的动画名都有对应 webm', () => {
   assert.deepStrictEqual(missing, [], `以下动画缺少 webm 素材:\n  ${missing.join('\n  ')}`);
 
   // 反向:目录里不应有从未被引用的孤儿素材(改名遗留)
+  // 例外:事件动画(balance/whisper/workStatus)已随上游素材一并入库,
+  //       但事件触发链属 P2(需要余额数据与代理状态事件),当前代码尚未引用。
+  //       这里显式登记,防止改名遗留与"待接入"混淆 —— 接入后请从此表移除。
+  const P2_EVENT_ASSETS = new Set([
+    '余额-分文不剩', '余额-数金皱眉', '余额-袋空如洗',
+    '余额-金袋叮当', '余额-钱袋如常', '余额-钱袋满溢',
+    '碎碎念-发呆碎碎念', '碎碎念-对屏碎碎念', '碎碎念-擦桌碎碎念',
+    '工作状态-原地踱步张望', '工作状态-垂头叹气冒汗', '工作状态-忙碌点按',
+    '工作状态-思考冒泡', '工作状态-清点归档', '工作状态-雀跃庆祝',
+  ]);
   const referenced = new Set(named.map((x) => x.name));
   const orphans = fs
     .readdirSync(ASSET_DIR)
     .filter((f) => f.endsWith('.webm'))
     .map((f) => path.basename(f, '.webm'))
-    .filter((n) => !referenced.has(n));
+    .filter((n) => !referenced.has(n) && !P2_EVENT_ASSETS.has(n));
   assert.deepStrictEqual(orphans, [], `以下素材未被 pet.js 引用(改名遗留?):\n  ${orphans.join('\n  ')}`);
+
+  // 登记表本身必须真实存在,防止它变成掩盖真实改名的白名单
+  for (const n of P2_EVENT_ASSETS) {
+    assert.ok(
+      fs.existsSync(path.join(ASSET_DIR, `${n}.webm`)),
+      `P2 事件动画登记表里的 ${n} 在素材目录中不存在`,
+    );
+  }
 
   // 命名归一化:点击回应族与上游 PC2005-cloud/dsh-pet 命名一致(无空格/无括号别名)
   for (const n of arrayLiteral('CLICK_RESPONSES')) {
