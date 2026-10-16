@@ -37,6 +37,9 @@ const REQUIRED_FILES = [
   'ui/pet-assets/原地左转奔跑.webm',
   'ui/pet-assets/写代码.webm',
   'ui/pet-assets/打瞌睡被惊醒.webm',
+  'ui/pet-assets/被吓一跳.webm',
+  'ui/pet-assets/点击回应-挠痒咯咯笑.webm',
+  'ui/pet-assets/点击回应-元气挥手.webm',
   'modules/logger.js',
   'modules/state.js',
   'modules/security.js',
@@ -58,6 +61,102 @@ test('关键文件存在', () => {
   for (const f of REQUIRED_FILES) {
     assert.ok(fs.existsSync(path.join(ROOT, f)), `缺少文件: ${f}`);
   }
+});
+
+// 鲸鱼娘动画素材存在性:ui/pet.js 里引用的每个动画名都必须有对应 webm。
+// 这是"命名归一化"回归的守门人 —— 素材被改名而代码没跟着改(或反之)会立刻红。
+// 动画名以字符串字面量出现在 4 类位置,全部要覆盖:
+//   1) 动作池数组(ACTS / CLICK_RESPONSES / CLICK_FALLBACKS / MOVES)
+//   2) 上下文偏好 CONTEXT_ACTS
+//   3) 上下文动画 CONTEXT_ANIM
+//   4) 台词气泡表 ANIM_BUBBLES 的键
+// 以及单例常量 IDLE / TURN / DRAG / SLEEP_ANIM
+test('动画素材存在性:pet.js 引用的动画名都有对应 webm', () => {
+  const ASSET_DIR = path.join(ROOT, 'ui', 'pet-assets');
+  const src = read('ui/pet.js');
+
+  // 从数组字面量里取单引号字符串
+  function arrayLiteral(name) {
+    const m = src.match(new RegExp(`const\\s+${name}\\s*=\\s*\\[([\\s\\S]*?)\\]`));
+    assert.ok(m, `pet.js 缺少数组 ${name}`);
+    return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+  }
+  // 取对象字面量的所有单引号字符串(用于 CONTEXT_ACTS / CONTEXT_ANIM:键与值都可能是动画名)
+  function quotedIn(re) {
+    const m = src.match(re);
+    assert.ok(m, `pet.js 缺少片段 ${re}`);
+    return [...m[1].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+  }
+  // 仅取对象字面量的【键】(用于 ANIM_BUBBLES:值是台词文本,不是动画名)
+  function keysIn(re) {
+    const m = src.match(re);
+    assert.ok(m, `pet.js 缺少片段 ${re}`);
+    return [...m[1].matchAll(/'([^']+)'\s*:/g)].map((x) => x[1]);
+  }
+
+  const named = [];
+  // 1) 单例常量
+  for (const c of ['IDLE', 'TURN', 'DRAG', 'SLEEP_ANIM']) {
+    const m = src.match(new RegExp(`const\\s+${c}\\s*=\\s*'([^']+)'`));
+    assert.ok(m, `pet.js 缺少常量 ${c}`);
+    named.push({ name: m[1], where: c });
+  }
+  // 2) 动画池(点击回应已拆成 CLICK_RESPONSES + CLICK_FALLBACKS)
+  for (const pool of ['ACTS', 'CLICK_RESPONSES', 'CLICK_FALLBACKS', 'MOVES']) {
+    for (const n of arrayLiteral(pool)) named.push({ name: n, where: pool });
+  }
+  // 3) 上下文偏好 / 上下文动画 / 台词气泡键
+  for (const n of quotedIn(/const\s+CONTEXT_ACTS\s*=\s*\{([\s\S]*?)\n\};/))
+    named.push({ name: n, where: 'CONTEXT_ACTS' });
+  for (const n of quotedIn(/const\s+CONTEXT_ANIM\s*=\s*\{([\s\S]*?)\n\};/))
+    if (n) named.push({ name: n, where: 'CONTEXT_ANIM' });
+  for (const n of keysIn(/const\s+ANIM_BUBBLES\s*=\s*\{([\s\S]*?)\n\};/))
+    named.push({ name: n, where: 'ANIM_BUBBLES' });
+
+  assert.ok(named.length > 50, `解析到的动画引用太少(${named.length}),正则可能失效`);
+
+  // 逐条断言素材存在
+  const missing = [];
+  for (const { name, where } of named) {
+    if (!/[\u4e00-\u9fff]/.test(name)) continue; // 跳过非动画名的键(label 等)
+    if (!fs.existsSync(path.join(ASSET_DIR, `${name}.webm`))) missing.push(`${name} (${where})`);
+  }
+  assert.deepStrictEqual(missing, [], `以下动画缺少 webm 素材:\n  ${missing.join('\n  ')}`);
+
+  // 反向:目录里不应有从未被引用的孤儿素材(改名遗留)
+  const referenced = new Set(named.map((x) => x.name));
+  const orphans = fs
+    .readdirSync(ASSET_DIR)
+    .filter((f) => f.endsWith('.webm'))
+    .map((f) => path.basename(f, '.webm'))
+    .filter((n) => !referenced.has(n));
+  assert.deepStrictEqual(orphans, [], `以下素材未被 pet.js 引用(改名遗留?):\n  ${orphans.join('\n  ')}`);
+
+  // 命名归一化:点击回应族与上游 PC2005-cloud/dsh-pet 命名一致(无空格/无括号别名)
+  for (const n of arrayLiteral('CLICK_RESPONSES')) {
+    assert.ok(!/\s/.test(n), `点击回应动画名不应含空格: ${n}`);
+  }
+  for (const bad of ['被吓一跳（炸毛）', '点击回应 - ', '360 度']) {
+    assert.ok(!src.includes(bad), `pet.js 仍残留旧别名「${bad}」`);
+  }
+  // P0 新增的两条点击回应必须在池中且素材就位
+  for (const n of ['点击回应-挠痒咯咯笑', '点击回应-元气挥手']) {
+    assert.ok(arrayLiteral('CLICK_RESPONSES').includes(n), `CLICK_RESPONSES 缺少 ${n}`);
+    assert.ok(fs.existsSync(path.join(ASSET_DIR, `${n}.webm`)), `缺少素材 ${n}.webm`);
+  }
+});
+
+test('点击回应池拆分(RESPONSES + FALLBACKS)装配正确', () => {
+  const src = read('ui/pet.js');
+  assert.ok(src.includes('const CLICK_RESPONSES = ['), '缺少 CLICK_RESPONSES 池');
+  assert.ok(src.includes('const CLICK_FALLBACKS = ['), '缺少 CLICK_FALLBACKS 池');
+  assert.ok(
+    src.includes('const CLICKS = CLICK_RESPONSES.concat(CLICK_FALLBACKS);'),
+    'CLICKS 应由 CLICK_RESPONSES.concat(CLICK_FALLBACKS) 合并得到',
+  );
+  // 单击仍从合并池选;handleEnded 的"点击回应播完回待机"判定仍认这个池
+  assert.ok(src.includes('setAnim(pick(CLICKS))'), '单击应仍从 CLICKS 选取');
+  assert.ok(src.includes('CLICKS.includes(anim)'), 'handleEnded 应仍以 CLICKS 判定点击回应');
 });
 
 test('JS 语法检查(node --check)', () => {
