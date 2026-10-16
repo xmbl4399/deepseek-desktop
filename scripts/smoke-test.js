@@ -507,6 +507,20 @@ test('右键/长按菜单 + 站内判定按 origin 精确比较', () => {
   assert.ok(!security.includes('url.startsWith(APP_ORIGIN)'), '不应再用前缀匹配判定站内');
   assert.ok(!read('main.js').includes('params.src.startsWith(security.APP_ORIGIN)'), 'webview 白名单应走 isAppUrl');
   assert.ok(!read('main.js').includes('href.startsWith(ORIGIN)'), '注入脚本应走 origin 比较');
+
+  // 菜单项构成(用户明确指定的三项形状):
+  //   空白处右键 = 只有"重新加载";只读区选中文字右键 = 复制 / 搜索 / 重新加载
+  // 「后退」已按用户反馈移除;只读区不再有「全选」(整页全选几乎用不到,选中态要的是复制/搜索)
+  assert.ok(ctx.includes("label: '用浏览器搜索所选文字'"), '只读区选中文字缺少"用浏览器搜索所选文字"');
+  assert.ok(ctx.includes('SEARCH_FALLBACK'), '缺少外部搜索兜底地址');
+  assert.ok(!ctx.includes("label: '后退'"), '「后退」已移除,不应再出现');
+  const selBranch = ctx.slice(ctx.indexOf('} else if (hasSelection)'), ctx.indexOf('if (isHttpLink)'));
+  assert.ok(selBranch.includes("label: '复制'"), '只读区选中文字缺少"复制"');
+  assert.ok(!selBranch.includes("label: '全选'"), '只读区不应再有"全选"(已按用户要求移除)');
+  // 末尾固定项:空白与选中两种情况都只有这一个收尾项
+  assert.ok(ctx.includes("// 末项固定为\"重新加载\""), '重新加载应是固定的末项');
+  // 可编辑区(聊天输入框)必须保留完整编辑动作,否则无法粘贴
+  assert.ok(ctx.includes("label: '粘贴'") && ctx.includes("label: '剪切'"), '可编辑区应保留完整编辑动作');
 });
 
 test('交互补齐:中文应用菜单 / 页内查找 / 缩放 / 标签右键与崩溃兜底', () => {

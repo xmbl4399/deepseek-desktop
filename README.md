@@ -76,7 +76,7 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 ### 桌宠：悬浮球 / 鲸鱼娘（托盘「桌宠显示」切换，状态记忆）
 
 - **默认悬浮球**（新用户）；可切换鲸鱼娘，或完全关闭显示
-- **鲸鱼娘** —— 51 个全量动画（待机 / 转向 / 动作 / 移动 / 点击回应），动画链概率驱动，单击随时回应、**双击开关主窗**
+- **鲸鱼娘** —— 53 个全量动画（待机 / 转向 / 动作 / 移动 / 点击回应），动画链概率驱动，单击随时回应、**双击开关主窗**
 - **悬浮球** —— **双击**开关主窗，**单击不响应**（避免误触）；可拖拽移动，松手钳制在屏幕内、允许半身悬出贴边
 - **入睡机制** —— 交互闲置 60 秒自动入睡（原地小憩），点击 / 拖拽 / 状态变化唤醒
 - **动作台词气泡** —— 每个动画配台词（写代码 = 「这个 bug 在哪…」、吃 Token = 「嗯，这 Token 好吃!」、拖拽 = 「喂喂，别拽我!」），随机变体，**10 秒冷却**防轰炸
@@ -149,7 +149,7 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 | 项目 | 借鉴内容 |
 |---|---|
 | [doxdk/deepseek-desktop](https://github.com/doxdk/deepseek-desktop) | Electron 壳基础（本项目 fork 自该仓库） |
-| [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) | 鲸鱼娘**动画素材**（51 个透明 webm，MIT 许可）+ **动画链模型**（双缓冲交叉淡入、概率链、命中区、拖拽手感） |
+| [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) | 鲸鱼娘**动画素材**（53 个透明 webm，MIT 许可）+ **动画链模型**（双缓冲交叉淡入、概率链、命中区、拖拽手感） |
 | [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) | **气泡思路**（轻量文字气泡，问候 / 提醒 / 台词） |
 | [AnRkey/Grok-Desktop](https://github.com/AnRkey/Grok-Desktop) | **多标签页**、系统主题跟随、常置顶，以及模块化 / 快捷键 / 安全加固思路 |
 

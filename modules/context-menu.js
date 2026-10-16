@@ -33,11 +33,13 @@ function create({ log, security, selectionBeforeGesture }) {
       )
       .then((r) => {
         if (!r || typeof r.x !== 'number' || typeof r.y !== 'number') return;
-        // Menu.popup 的 x/y 相对"窗口客户区",而壳层页面原点还在客户区内的原生应用菜单栏下方
-        // (webview 元素 rect 是相对壳层页面量的,不含这段)。不补偿菜单会整体下偏,这里按
-        // 客户区高度 - 页面视口高度 反推菜单栏占位。
-        // 注:即便补偿后菜单仍会落在手指下方约 30px —— 这是原生菜单的正常下落姿态(菜单从触点向下展开),
-        // 只要"跟着手指而不是跟着鼠标光标"就已经达到目的。
+        // 坐标口径(2026-10 实测确定,勿凭直觉改回):
+        //   context-menu 事件的 params.x/y 是**客户区坐标** —— webview 铺满内容区,
+        //   实测 window.innerHeight 恒等于窗口 getContentBounds().height,两者同口径。
+        //   因此 y 方向**不能**再加 webview 的 rect.y(tabbar 高 46px),否则菜单整体下偏 46px
+        //   (这正是历史 bug:offset.y = rect.y + dy 把 tabbar 高度重复计入了一次)。
+        //   x 方向仍必须加 rect.x:窗口边框(实测 dx=7)属于客户区但不属于壳层页面的坐标系。
+        // dy 只在"客户区比页面视口高"时才非零(极少数带原生菜单栏的布局),作为兜底保留。
         let dx = 0;
         let dy = 0;
         try {
@@ -48,7 +50,7 @@ function create({ log, security, selectionBeforeGesture }) {
             dy = Math.max(0, (content.height || 0) - (r.innerH || 0));
           }
         } catch (e) { /* 取不到就按 0 处理(菜单会略偏,但仍锚定在手指附近) */ }
-        hostOffset = { x: dx + r.x, y: dy + r.y };
+        hostOffset = { x: dx + r.x, y: dy };
       })
       .catch(() => { /* 取不到就回退到"鼠标光标位置" */ });
   }
@@ -108,11 +110,10 @@ function create({ log, security, selectionBeforeGesture }) {
         { label: '全选', enabled: flags.canSelectAll !== false, click: () => alive(wc) && wc.selectAll() },
       );
     } else if (hasSelection) {
-      // 只读区(回答正文/搜索结果):复制选中 + 全选整页 + 外部搜索
+      // 只读区(回答正文/搜索结果):复制选中 + 外部搜索。
+      // 注:不再提供"全选"——整页全选会把菜单变长且几乎用不到,选中态下用户要的是复制/搜索。
       items.push(
         { label: '复制', click: () => alive(wc) && wc.copy() },
-        { label: '全选', click: () => alive(wc) && wc.selectAll() },
-        { type: 'separator' },
         {
           label: '用浏览器搜索所选文字',
           click: () => security.openExternalSafe(SEARCH_FALLBACK + encodeURIComponent(selection.trim().slice(0, 120))),
@@ -139,11 +140,9 @@ function create({ log, security, selectionBeforeGesture }) {
       items.push({ label: '复制媒体地址', click: () => clipboard.writeText(link || p.srcURL || '') });
     }
 
-    if (items.length) items.push({ type: 'separator' });
-    items.push(
-      { label: '后退', enabled: alive(wc) && wc.canGoBack(), click: () => alive(wc) && wc.goBack() },
-      { label: '重新加载', click: () => alive(wc) && wc.reload() },
-    );
+    // 末项固定为"重新加载":空白处右键就只有这一项;选中文字时为 复制/搜索/重新加载 三项。
+    // 注:早期版本这里还带一项"后退",用户反馈冗余,已移除。
+    items.push({ label: '重新加载', click: () => alive(wc) && wc.reload() });
     // 开发者工具只在开发/调试模式出现,打包版默认不暴露
     if (!app.isPackaged || process.env.DS_DEBUG === '1') {
       items.push({ type: 'separator' });
@@ -184,8 +183,9 @@ function create({ log, security, selectionBeforeGesture }) {
       const now = Date.now();
       if (now - lastShownAt < 150) return;
       lastShownAt = now;
+      let popped = null;
       try {
-        popupAt(wc, p);
+        popped = popupAt(wc, p);
       } catch (e) {
         log('[ctxmenu] build/popup failed:', e && e.message);
       }
@@ -197,6 +197,7 @@ function create({ log, security, selectionBeforeGesture }) {
         'media=' + (p.mediaType || '-'),
         'beforeSel=' + (before === null ? '?' : before.trim().length),
         'at=' + p.x + ',' + p.y,
+        'bound=' + (popped ? 1 : 0),
       );
     });
     log('[ctxmenu] attached:', label);
