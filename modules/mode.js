@@ -108,13 +108,15 @@ function create({ log, state, floating, pet }) {
     return widgetSize;
   }
 
+  // 只记录并持久化档位。不再在这里同步给显示模块 —— 档位是"占工作区宽度的比例",
+  // 换算成像素需要当前分辨率,而 mode 层没有 screen 上下文;
+  // 由 main.js 的 actions.setWidgetSize 统一量一次工作区宽度后下发给两个模块。
+  // (早先这里顺手转了 floating/pet.setWidgetSize(level),不传分辨率会退回 1920 基准,
+  //  把 main.js 刚算好的按比例尺寸覆盖掉。)
   function setWidgetSize(level) {
     if (!VALID_SIZES.includes(level)) return;
     widgetSize = level;
     saveMode();
-    // 同步给两个显示模块(窗口创建时按档位取尺寸)
-    floating.setWidgetSize(level);
-    pet.setWidgetSize(level);
     log('[mode] widgetSize =', widgetSize);
   }
 

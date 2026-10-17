@@ -21,15 +21,30 @@ const HIT_POLL_MS = 100;
 const PET_PAGE = path.join(__dirname, '..', 'ui', 'pet.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
-// 三档尺寸表(纯函数,便于测试):小/中/大(16:9,可见桌宠 10-17% 屏宽)
-const WIDGET_PET_SIZES = {
-  small: { w: 220, h: 124 },
-  medium: { w: 300, h: 169 },
-  large: { w: 400, h: 225 },
-};
-function widgetPetSize(level) {
-  return WIDGET_PET_SIZES[level] || WIDGET_PET_SIZES.medium;
+// 三档尺寸:按工作区宽度取比例,而不是固定 CSS 像素。
+// 固定值的老问题:220/300/400 在 1080p(1920 CSS)上中档占屏宽 15.6% 正好,
+// 换到 2048 CSS 的 4K 屏(200% 缩放)就只剩 5.5% —— 同一套数字在大屏上"自动变小",
+// 用户换显示器就像换了只小一号的宠物。改成比例后,三块屏上的视觉占比一致。
+// 16:9 保持不变;比例以人物本体(HIT 区宽 120/320 = 20.3% 窗口宽)折算,
+// 取 14%/19%/24% 让本体落在屏宽的 2.8%/3.9%/4.9%。
+const WIDGET_PET_RATIOS = { small: 0.14, medium: 0.19, large: 0.24 };
+const PET_ASPECT = 16 / 9;
+// 上下限:极端分辨率下不让它小到看不见、大到盖住屏幕
+const PET_MIN_W = 160;
+const PET_MAX_W = 760;
+function widgetPetSize(level, availW) {
+  const ratio = WIDGET_PET_RATIOS[level] || WIDGET_PET_RATIOS.medium;
+  const base = typeof availW === 'number' && availW > 0 ? availW : 1920;
+  const w = Math.round(Math.max(PET_MIN_W, Math.min(PET_MAX_W, base * ratio)));
+  return { w, h: Math.round(w / PET_ASPECT) };
 }
+// 1920 基准下的三档像素值,仅供阅读/文档参考(运行时一律走 widgetPetSize(level, availW))。
+// 导出给 require-check 做"比例换算结果"的回归校验。
+const WIDGET_PET_SIZES = {
+  small: widgetPetSize('small', 1920),
+  medium: widgetPetSize('medium', 1920),
+  large: widgetPetSize('large', 1920),
+};
 
 // 命中区按当前窗口尺寸比例缩放(不取整:基准 320x180 时保持精确的 {100,25,120,142.5})
 function computeHit(w, h) {
@@ -60,9 +75,19 @@ function create({ log, state, onWindowLoaded }) {
   let petH = PET_H;
   let HIT = computeHit(petW, petH); // 当前命中区(随尺寸更新)
 
-  // 主进程在设置变化/启动时调用,同步当前尺寸档位
-  function setWidgetSize(level) {
-    const sz = widgetPetSize(level);
+  // 主进程在设置变化/启动时调用,同步当前尺寸档位。
+  // 尺寸随屏幕分辨率走:传 availW 就按比例算,不传用主屏工作区宽。
+  function effectiveAvailW(availW) {
+    if (typeof availW === 'number' && availW > 0) return availW;
+    try {
+      const wa = screen.getPrimaryDisplay().workArea;
+      return wa && wa.width > 0 ? wa.width : 1920;
+    } catch (e) {
+      return 1920;
+    }
+  }
+  function setWidgetSize(level, availW) {
+    const sz = widgetPetSize(level, effectiveAvailW(availW));
     petW = sz.w;
     petH = sz.h;
     HIT = computeHit(petW, petH);
@@ -249,6 +274,8 @@ function create({ log, state, onWindowLoaded }) {
     setWidgetSize,
     applyWidgetSize,
     widgetPetSize,
+    WIDGET_PET_RATIOS,
+    WIDGET_PET_SIZES,
     PET_W,
     PET_H,
   };

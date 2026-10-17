@@ -57,11 +57,12 @@ function applySize() {
   // 气泡随鲸鱼娘大小缩放:12px @ 320 宽为基准
   const bubbleScale = PET_W / 320;
   bubbleEl.style.fontSize = Math.max(9, Math.round(12 * bubbleScale)) + 'px';
-  // 背景光环:以人物中心为圆心,直径 ≈ 人物宽的 2.4 倍
-  haloEl.style.left = (HIT.x + HIT.w / 2) + 'px';
-  haloEl.style.top = (HIT.y + HIT.h / 2) + 'px';
-  haloEl.style.width = (HIT.w * 2.4) + 'px';
-  haloEl.style.height = (HIT.w * 2.4) + 'px';
+  // 轮廓投影(drop-shadow)半径:随窗口尺寸缩放,否则小档时投影相对太粗、大档时太细。
+  // 基准 480 宽 → 9px / 27px,与 320 老基准的 6px / 18px 视觉厚度一致。
+  // 写 :root 上的 CSS 变量,video.pv 的 filter 引用它们(两路 video 共用,一次更新即可)。
+  const rimScale = PET_W / 480;
+  document.documentElement.style.setProperty('--rim-near', Math.max(3, 9 * rimScale).toFixed(1) + 'px');
+  document.documentElement.style.setProperty('--rim-far', Math.max(8, 27 * rimScale).toFixed(1) + 'px');
   // 脚下阴影:人物脚底处椭圆,宽 ≈ 人物宽的 1.4 倍
   shadowEl.style.top = (HIT.y + HIT.h - HIT.h * 0.06) + 'px';
   shadowEl.style.width = (HIT.w * 1.4) + 'px';
@@ -163,19 +164,126 @@ const CLICKS = CLICK_RESPONSES.concat(CLICK_FALLBACKS);
 const DRAG = '被鼠标拖拽悬空反馈';  // 拖拽动画
 const MOVES = ['螃蟹走路', '原地漂浮踏步', '原地左转奔跑']; // 移动动画池
 
-// 特定前台上下文 → 提高概率的动作(60% 从偏好池选,否则全池均匀;other 全均匀)
+// ---------- 前台场景 → 动作池 ----------
+// 之前每个场景只有 3 件动作,80 个素材里 64 个永远轮不到:新增素材几乎等于白加,
+// 而"写代码"这种场景反复播同一件,看两分钟就腻。现在改为每场景一簇相关动作,
+// 配合下面 pickAct 的 0.6/0.4 加权 —— 既有场景感,又不重复。
 const CONTEXT_ACTS = {
-  ide: ['写代码', '深度思考碎碎念', '轻快记录'],
-  terminal: ['深度思考碎碎念', '写代码', '原地敲击桌面互动'],
-  office: ['轻快记录', '写代码', '深度思考碎碎念'],
-  design: ['轻快记录', '写代码', '照镜子'],
-  browser: ['照镜子', '轻快摇摆舞', '悠闲哼歌'],
-  chat: ['悠闲哼歌', '轻快摇摆舞', '吹气球'],
-  meeting: ['女仆屈膝礼仪', '优雅女仆舞', '摇扇纳凉'],
-  media: ['原地小憩沉眠', '哈欠连天', '摇扇纳凉'],
-  game: ['玩游戏气急败坏', '被吓一跳', '原地跳跃抓碎头顶物品'],
-  explorer: ['照镜子', '轻快记录', '悠闲哼歌'],
+  // 写代码/排查:坐着敲、思考、记录,偶尔抓狂和摸鱼
+  ide: [
+    '写代码', '深度思考碎碎念', '轻快记录', '原地敲击桌面互动',
+    '超大伸懒腰', '哈欠连天', '打瞌睡被惊醒', '玩游戏气急败坏',
+    '偷吃零食被抓住', '吃Token', '撸猫', '原地重力下蹲压缩',
+    '小提琴演奏',
+  ],
+  // 终端:跑命令、等构建、出错抓狂
+  terminal: [
+    '写代码', '深度思考碎碎念', '原地敲击桌面互动', 
+    '玩游戏气急败坏', '超大伸懒腰', '哈欠连天', '轻快记录',
+    '原地重力下蹲压缩', '被吓一跳',
+  ],
+  // 办公文档:记录、敲键盘、礼仪性营业,枯燥到打瞌睡
+  office: [
+    '轻快记录', '写代码', '原地敲击桌面互动', '女仆屈膝礼仪',
+    '深度思考碎碎念', '超大伸懒腰', '哈欠连天', '原地重力下蹲压缩',
+    '摇扇纳凉', '晨间刷牙', '大口吃零食', '吃白饭',
+  ],
+  // 设计创作:看自己、换装试色、找灵感
+  design: [
+    '照镜子', '整体换装试色', '轻快记录', '凭空生花',
+    '小幅度原地360度旋转展示', '悠闲哼歌', '蝴蝶蜜蜂环绕头顶开花', '写代码',
+  ],
+  // 浏览/管理文件:翻看、照镜子、随手玩点小东西
+  browser: [
+    '照镜子',  '悠闲哼歌', '轻快摇摆舞', '玩水枪',
+    '原地专心玩魔方', '偷吃零食被抓住', '整体换装试色', '轻快记录',
+    '是啊，吃什么', '拆礼物', '放风筝', '荡秋千', '骑木马', '吹笛子',
+    '用鲸鱼尾巴拍打地面',
+  ],
+  explorer: [
+    '照镜子',  '悠闲哼歌', '轻快记录', '原地专心玩魔方',
+    '偷吃零食被抓住', '三球抛接', '轻快摇摆舞',
+  ],
+  // 聊天:歌舞助兴、吹气球、杂耍表演
+  chat: [
+    '悠闲哼歌', '轻快摇摆舞', '可爱宅舞', '吹气球', '三球抛接',
+    '扑克魔术', '变鸽子', '女仆屈膝礼仪', '摇扇纳凉', '是啊，吃什么',
+    '动物环绕', '鲸鱼吐泡泡特效',
+  ],
+  // 开会:端正、安静、别太吵
+  meeting: [
+    '女仆屈膝礼仪', '优雅女仆舞', '摇扇纳凉', '轻快记录',
+    '打瞌睡被惊醒', '照镜子', '原地重力下蹲压缩',
+    '下五子棋',
+  ],
+  // 看片听歌:一起放松、打瞌睡、摇扇子
+  media: [
+    '原地小憩沉眠', '哈欠连天', '摇扇纳凉', '悠闲哼歌',
+    '打瞌睡被惊醒', '超大伸懒腰', 
+  ],
+  // 打游戏:自己也玩、气急败坏、兴奋
+  game: [
+    '玩游戏气急败坏', '被吓一跳', '原地跳跃抓碎头顶物品', '原地专心玩魔方',
+    '原地蹲下玩玩具汽车', '抽陀螺', '踢毽子', '吹气球',
+    '小幅度原地360度旋转展示', '偷吃零食被抓住', '三球抛接', '撸猫',
+    '蓝鲸现世', '动物环绕',
+  ],
 };
+
+// 一天中的时段 → 那个时段自然会做的事(吃饭档、节令档)。
+// 这两簇动作共 22 件,占比不小,但和你在干什么无关,按软件场景塞进去会显得莫名其妙
+// (写代码时突然拿出大闸蟹)。改成按真实时间走,任何场景下都有机会轮到:
+// 中午在 IDE 前也会吃饭,过年时她会自己写福字。
+function periodPool(now) {
+  const d = now instanceof Date ? now : new Date();
+  const h = d.getHours();
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  // 节令优先:前后各留几天,免得一年只有一天能看见
+  const festival = {
+    '放烟花': m === 1 && day <= 7,          // 元旦
+    '写福字': m === 2 && day <= 12,          // 春节前后
+    '吃汤圆': m === 2 || m === 3,
+    '吃饺子': m === 2 || m === 12,
+    '吃青团': m === 4,
+    '吃粽子': m === 6,
+    '中秋赏月吃月饼': m === 9,
+    '吃重阳糕': m === 10,
+    '插茱萸赏菊': m === 10 || m === 11,
+    '讨糖南瓜灯': m === 10 || m === 11,
+    '萌化小幽灵': m === 10 || m === 11,
+    '装点圣诞树': m === 12,
+    '吃腊八粥': m === 12 || m === 1,
+    '收红包': m === 1 || m === 2,
+    '吃年糕': m === 1 || m === 2,
+    '吃长寿面': m === 1 || m === 2,
+    '穿针乞巧': m === 8,
+    '放河灯': m === 7 || m === 8,
+    '舞狮头': m === 1 || m === 2,
+    '放孔明灯': m === 12 || m === 1,
+    '堆雪人': m === 12 || m === 1 || m === 2,
+    '被落叶淹没': m === 10 || m === 11,
+  };
+  const out = [];
+  for (const [name, on] of Object.entries(festival)) {
+    if (on && ACT_CATEGORY_OF.has(name)) out.push(name);
+  }
+  // 饭点:早 6-9 / 午 11-13 / 晚 17-19,饭点前后那件"吃"才有意义
+  if (h >= 6 && h <= 9) out.push('吃早餐');
+  if (h >= 11 && h <= 13) out.push('吃午餐');
+  if (h >= 17 && h <= 19) out.push('吃晚餐');
+  // 零嘴不看时间,但也没必要全天候,只在清醒时段给
+  if (h >= 9 && h <= 22) out.push('吃冰淇淋融化', '吃糖葫芦', '吃西瓜', '涮火锅', '吃大闸蟹');
+  return out.filter((n) => ACT_CATEGORY_OF.has(n));
+}
+
+// 池子里写错一个字 → 素材不存在 → 视频静默黑屏且无从排查,所以开发态直接喊出来。
+for (const [ctx, pool] of Object.entries(CONTEXT_ACTS)) {
+  for (const name of pool) {
+    if (!ACT_CATEGORY_OF.has(name)) dbg('场景池引用了不存在的动作', ctx, name);
+  }
+}
+
 
 // 按分类权重抽一个分类(weight 加权,类内等概率由 pickAct 处理)
 function pickCategory(exclude) {
@@ -192,6 +300,12 @@ function pickCategory(exclude) {
 
 // 随机动作:按前台上下文提高特定动作概率
 function pickAct() {
+  // 时间/节令动作有独立的一档概率:跟你在用什么软件无关,但一天里的确该轮到。
+  // 15% 看着不起眼,按每 5 秒一件动作算大约 40 秒来一次,存在感刚好。
+  if (Math.random() < 0.15) {
+    const period = periodPool();
+    if (period.length) return pick(period, anim);
+  }
   const pref = CONTEXT_ACTS[contextCategory];
   if (pref && pref.length && Math.random() < 0.6) return pick(pref, anim);
   // 上游语义:先按 weight 选分类,再在该分类内等概率选动作
@@ -220,7 +334,6 @@ let clickTimer = null;
 
 // ---------- 趣味气泡(抄 dsh-dafeiyu 的气泡思路:轻量文字气泡,定时/事件触发) ----------
 const bubbleEl = document.getElementById('bubble');
-const haloEl = document.getElementById('halo');
 const shadowEl = document.getElementById('shadow');
 let bubbleTimer = null;
 // 气泡冷却(借鉴 zealot00/dsh-pet 的提醒互斥):10s 内不连发,防通知轰炸;
@@ -330,20 +443,54 @@ setInterval(() => {
 // 前台上下文由"前台感知开关"驱动:焦点在 DeepSeek=deepseek(吐泡泡循环,醒目),
 // 其余按程序类型播对应小动作,other 保持待机链
 let contextCategory = 'other';
-// 前台上下文 → 动画(仅用现有基础素材;deepseek 单独处理,other 保持待机链)
+// 前台上下文 → 切换场景时先播一下的"姿态"动作(一次性),之后交回动作链,
+// 由 CONTEXT_ACTS 按场景抽动作。deepseek 也走这里 —— 以前它是唯一一个常驻循环态,
+// 结果只要焦点在 DeepSeek 上,她就一直吐泡泡,同一个小动作无限重复。
+// other 留空:不打断当前动画链。
 const CONTEXT_ANIM = {
-  browser: '东张西望',         // 浏览器:东张西望(浏览)
-  explorer: '东张西望',        // 文件管理器:东张西望(翻找)
-  ide: '原地漂浮踏步',         // 编辑器:稳稳步子(写代码)
-  office: '原地漂浮踏步',      // 办公:稳稳步子(干活)
-  design: '原地漂浮踏步',      // 设计:稳稳步子(创作)
-  terminal: '螃蟹走路',        // 终端:横步忙碌(跑命令)
-  chat: '点击回应-害羞惊讶', // 聊天:害羞(消息来了)
-  meeting: '点击回应-害羞惊讶', // 视频会议:害羞(被看着)
-  media: '待机呼吸休闲',       // 影音:一起放松
-  game: '点击回应-开心跃动', // 游戏:开心跃动(玩得开心)
+  browser: '东张西望',           // 浏览器:东张西望(浏览)
+  explorer: '东张西望',          // 文件管理器:东张西望(翻找)
+  ide: '原地漂浮踏步',           // 编辑器:稳稳步子(写代码)
+  office: '原地漂浮踏步',        // 办公:稳稳步子(干活)
+  design: '原地漂浮踏步',        // 设计:稳稳步子(创作)
+  terminal: '螃蟹走路',          // 终端:横步忙碌(跑命令)
+  chat: '点击回应-害羞惊讶',     // 聊天:害羞(消息来了)
+  meeting: '点击回应-害羞惊讶',  // 视频会议:害羞(被看着)
+  media: '待机呼吸休闲',         // 影音:一起放松
+  game: '点击回应-开心跃动',     // 游戏:开心跃动(玩得开心)
+  deepseek: '深度思考碎碎念',    // 陪着写:先碎碎念一下,后面按场景抽动作
   other: '',
 };
+
+// 焦点停在同一个软件里时,每隔这么久重新判定一次场景并换下个动作。
+// 没有这个重新判定,她会一直把当前这一件动作循环到用户切走窗口为止 ——
+// 上下文变化只在"切到别的软件"时触发,停在原地不动时是没有任何事件的。
+const CONTEXT_RECHECK_MS = 45 * 1000;
+let contextRecheckTimer = null;
+function scheduleContextRecheck() {
+  if (contextRecheckTimer) clearTimeout(contextRecheckTimer);
+  contextRecheckTimer = setTimeout(() => {
+    contextRecheckTimer = null;
+    if (sleeping || drag.active) return; // 睡着的别自己醒,拖拽中别打断
+    // 用户手动点播的动作让他播完,不抢
+    if (!CLICKS.includes(anim) && !MOVES.includes(anim) && anim !== DRAG && anim !== IDLE) {
+      pickContextAct();
+    }
+    scheduleContextRecheck();
+  }, CONTEXT_RECHECK_MS);
+}
+
+// 当前场景是否有专属动作池(决定是走场景链还是全局权重链)
+function hasContextPool() {
+  const pool = CONTEXT_ACTS[contextCategory];
+  return !!(pool && pool.length);
+}
+
+// 按当前场景抽一个动作(感知专用的入口,不走"播完自然回链"的权重)
+function pickContextAct() {
+  const next = pickAct();
+  if (next) setAnim(next);
+}
 
 api.on('pet-context', (c) => {
   if (!c || typeof c.category !== 'string') return;
@@ -352,6 +499,40 @@ api.on('pet-context', (c) => {
   applyPerception();
 });
 
+// ---------- 手动播放动作(右键菜单「播放动作 → 分类 → 动作」) ----------
+// 动作名来自主进程下发的菜单模型,与素材文件名一一对应(assetSrc 会做 encodeURIComponent)。
+// 不认识的中间态(睡眠中的"原地小憩沉眠")也允许播,用户明确点了就该响应。
+function playAction(name) {
+  if (!name) return;
+  if (!ACT_CATEGORY_OF.has(name)) {
+    // 不是随机池里的动作:可能是点击回应等专属动画,ui/pet.js 里没有分布但素材存在。
+    // 这里直接放行(setAnim 只按名字找素材),只记一条日志方便排查
+    dbg('play-action(非池内)', name);
+  }
+  noteInteraction(); // 手动播放算一次交互:刷新入睡计时,睡眠中被点选会先醒
+  stopMove();
+  clickBusy = false;
+  if (clickBusyTimer) {
+    clearTimeout(clickBusyTimer);
+    clickBusyTimer = null;
+  }
+  if (name === SLEEP_ANIM) {
+    goSleep(); // 睡眠是循环态,走专门的入口(一次性播放会 3 秒就自己醒)
+    return;
+  }
+  setAnim(name);
+  dbg('play-action', name);
+}
+
+api.on('pet-play', (p) => {
+  if (!p || typeof p.name !== 'string') return;
+  playAction(p.name);
+});
+
+// 主进程查询用:把动作目录回给主进程(菜单模型据此生成分类与列表)。
+// 放在 window 上而不是 API 里,是因为 preload 的 invoke 由主进程发起 executeJavaScript 读取。
+window.__dsPetCatalog = () => ACT_CATEGORIES.map((c) => ({ id: c.id, actions: c.actions.slice() }));
+
 // 状态感知落地:拖拽/点击中不打断;睡眠中不响应(感知不唤醒睡眠,仅交互唤醒);
 // 焦点在 DeepSeek 用循环"忙碌"动画,其余用一次性上下文动画
 function applyPerception() {
@@ -359,22 +540,23 @@ function applyPerception() {
   if (drag.active) return; // 拖拽/点击中不打断
   stopMove(); // 打断自动移动
   dbg('perception ->', contextCategory, 'anim=', anim, 'once=', once);
-  if (contextCategory === 'deepseek') {
-    // 焦点在 DeepSeek:持续"忙碌"动画(循环),直到焦点离开
-    if (anim === '鲸鱼吐泡泡特效' && !once) return; // 已在循环播放中
-    setAnimLoop('鲸鱼吐泡泡特效');
-    return;
-  }
-  // 焦点离开 DeepSeek:退出感知循环动画(链式模型里只有感知用循环,once=false),
-  // 回待机链,否则鲸鱼娘会永远卡在循环动画里(之前"没看见变化"的根因之一);
+  // 焦点离开 DeepSeek:退出旧的感知循环动画(老版本 deepseek 用的是循环态),
+  // 否则鲸鱼娘会永远卡在循环动画里(之前"没看见变化"的根因之一)。
   // 之后继续应用上下文动画(若 setAnim 连续调用,后续切换会顶掉前面的)
   if (!once) setAnim(IDLE);
   // 正在播一次性点击动画时不打断(让脉冲播完自然回链)
   if (once && CLICKS.includes(anim)) return;
   const ctxAnim = CONTEXT_ANIM[contextCategory] || '';
-  if (ctxAnim) { setAnim(ctxAnim); return; }
-  // other/无上下文:不打断当前动画链
-}
+  if (ctxAnim) {
+    setAnim(ctxAnim);
+  } else if (CONTEXT_ACTS[contextCategory] && Math.random() < 0.5) {
+    // 没有固定姿态的场景(目前只有 other 之外的空项):一半概率直接抽个场景动作,
+    // 一半概率不打断当前动画链 —— 切窗口太频繁时全部抢播会显得很急躁
+    pickContextAct();
+  }
+  // 停在同一个软件里不会有新的上下文事件,靠定时器隔一阵换下个动作
+  if (CONTEXT_ACTS[contextCategory]) scheduleContextRecheck();
+  else if (contextRecheckTimer) { clearTimeout(contextRecheckTimer); contextRecheckTimer = null; }}
 
 // 窗口位置本地追踪:Electron 中渲染进程 window.moveTo 无效,移动全走主进程
 // setPosition(IPC pet-move),window.screenX 不会随主进程移动更新,故用本地值。
@@ -473,7 +655,14 @@ function handleEnded() {
     clickBusy = false; // 点击回应播完,允许下一次单击响应
     if (clickBusyTimer) { clearTimeout(clickBusyTimer); clickBusyTimer = null; }
     setAnim(IDLE);
-    applyPerception(); // 交互动画播完恢复状态感知(焦点在 DeepSeek 时回到吐泡泡循环)
+    applyPerception(); // 交互动画播完恢复状态感知(按当前场景重新抽动作)
+    return;
+  }
+  // 上下文动作播完:人在哪个软件前面,就接着在那个场景的动作池里抽 ——
+  // 不再掉回全局"待机 10/转向 5/动作池 80/移动 5"的无差别权重,
+  // 否则场景感知只能在切窗口那一下生效一次,播完就散了。
+  if (hasContextPool()) {
+    pickContextAct();
     return;
   }
   pickNext(); // 自主链:按概率选下一个

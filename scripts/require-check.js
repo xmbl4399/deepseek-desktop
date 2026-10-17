@@ -142,26 +142,57 @@ if (floating.BALL_SIZE !== 48) {
   failed += 1;
 }
 // 尺寸档位:悬浮球/鲸鱼娘 小/中/大(托盘"尺寸"选项)
+// 档位是"占工作区宽度的比例",不是固定像素:同一档位在不同分辨率上换算出的像素不同,
+// 但屏幕占比恒定(这也正是改比例的原因)。所以断言的是比例与夹取行为,不是具体数字。
 {
   const bs = [
-    ['small', 40], ['medium', 48], ['large', 56], ['huge', 48],
+    ['small', 44], ['medium', 52], ['large', 61], ['huge', 52], // 1920 基准
   ];
   for (const [level, want] of bs) {
-    if (floating.widgetBallSize(level) !== want) {
-      console.error(`FAIL: floating.widgetBallSize(${level}) 应为 ${want}, 实得 ${floating.widgetBallSize(level)}`);
+    const got = floating.widgetBallSize(level, 1920);
+    if (got !== want) {
+      console.error(`FAIL: floating.widgetBallSize(${level},1920) 应为 ${want}, 实得 ${got}`);
       failed += 1;
     }
   }
+  // 分辨率自适应:同一档位在 2048 CSS 宽的屏上必须变大(否则就是又回到固定像素了)
+  if (!(floating.widgetBallSize('medium', 2048) > floating.widgetBallSize('medium', 1920))) {
+    console.error('FAIL: 悬浮球尺寸应随工作区宽度增长');
+    failed += 1;
+  }
+  // 极端分辨率下必须被夹住,不能撑爆桌面
+  if (floating.widgetBallSize('large', 20000) > 96 || floating.widgetBallSize('small', 100) < 32) {
+    console.error('FAIL: 悬浮球尺寸未做上下限夹取');
+    failed += 1;
+  }
   const ps = [
-    ['small', { w: 220, h: 124 }], ['medium', { w: 300, h: 169 }],
-    ['large', { w: 400, h: 225 }], ['huge', { w: 300, h: 169 }],
+    ['small', { w: 269, h: 151 }], ['medium', { w: 365, h: 205 }],
+    ['large', { w: 461, h: 259 }], ['huge', { w: 365, h: 205 }], // 1920 基准
   ];
   for (const [level, want] of ps) {
-    const got = pet.widgetPetSize(level);
+    const got = pet.widgetPetSize(level, 1920);
     if (got.w !== want.w || got.h !== want.h) {
-      console.error(`FAIL: pet.widgetPetSize(${level}) 应为 ${JSON.stringify(want)}, 实得 ${JSON.stringify(got)}`);
+      console.error(`FAIL: pet.widgetPetSize(${level},1920) 应为 ${JSON.stringify(want)}, 实得 ${JSON.stringify(got)}`);
       failed += 1;
     }
+  }
+  // 鲸鱼娘:宽高比恒为 16:9(命中区靠这个比例换算,破了人物就对不上)
+  for (const level of ['small', 'medium', 'large']) {
+    const got = pet.widgetPetSize(level, 2560);
+    if (Math.abs(got.w / got.h - 16 / 9) > 0.02) {
+      console.error(`FAIL: pet.widgetPetSize(${level}) 宽高比不是 16:9: ${JSON.stringify(got)}`);
+      failed += 1;
+    }
+  }
+  if (!(pet.widgetPetSize('medium', 2048).w > pet.widgetPetSize('medium', 1920).w)) {
+    console.error('FAIL: 鲸鱼娘尺寸应随工作区宽度增长');
+    failed += 1;
+  }
+  // 三档必须严格递增(小 < 中 < 大),否则菜单里切了没区别
+  const seq = ['small', 'medium', 'large'].map((l) => pet.widgetPetSize(l, 2048).w);
+  if (!(seq[0] < seq[1] && seq[1] < seq[2])) {
+    console.error(`FAIL: 鲸鱼娘三档必须递增,实得 ${seq.join(' / ')}`);
+    failed += 1;
   }
 }
 // 贴边钳制逻辑验证(wa 1920x1080):
@@ -453,16 +484,17 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
     version: '1.1.3',
   };
 
-  // 展开成"含子菜单项"的平铺列表,便于按标签查类型/勾选
+  // 展开成"含子菜单项"的平铺列表,便于按标签查类型/勾选(逐层递归:菜单是三级结构)
   const flat = (tpl) => {
     const out = [];
     tpl.forEach((i) => {
-      if (i.submenu) out.push(...i.submenu);
+      if (i.submenu) out.push(...flat(i.submenu));
       else if (i.type !== 'separator') out.push(i);
     });
     return out;
   };
-  // 顶层标签序列(子菜单压成 [a|b|c],便于一次断言顺序与分组)
+  // 顶层标签序列(子菜单压成 [a|b|c],便于一次断言顺序与分组)。
+  // 只展开一层:三级菜单的外层压成 [分类名|分类名|…],第三级的动作不参与顺序断言
   const labelsOf = (tpl) =>
     tpl
       .filter((i) => i.type !== 'separator')
@@ -488,6 +520,7 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
   const wantLabels = [
     '打开主窗口', '截图提问',
     '[悬浮球|鲸鱼娘|关闭显示]', '[小|中|大]',
+    '[小动作|玩耍|吃什么|时节|文字]', // 播放动作:三级菜单的外层(分类),动作在第三级
     '主窗置顶', '前台感知开关', '开机启动',
     '关于 DeepSeek v1.1.3', '打开数据目录',
     '卸载 DeepSeek…', '退出',
@@ -563,9 +596,17 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
 
   // ⑧ 悬浮球菜单:托盘专属项必须一项都不出现,且不因此留下空分组(会产生悬空分隔线)
   const ballGroups = menuModel.build(baseCtx, 'ball');
+  // 项序断言只看两层:块层要么是普通 items,要么是折叠父行(用 caption)。
+  // 播放动作是三级结构,它的子项是分类而不是动作,不能按"动作项"平铺进来。
+  const ballTop = [];
+  ballGroups.forEach((g) =>
+    (g.blocks || []).forEach((b) => {
+      if (b.kind === 'submenu') ballTop.push({ label: b.caption || b.label });
+      else (b.items || []).forEach((it) => ballTop.push(it));
+    }));
+  const ballLabels = ballTop.map((i) => i.label);
   const ballItems = [];
   ballGroups.forEach((g) => (g.blocks || []).forEach((b) => (b.items || []).forEach((it) => ballItems.push(it))));
-  const ballLabels = ballItems.map((i) => i.label);
   // 开关类设置(置顶 / 前台感知 / 开机启动)与信息类(关于 / 数据目录 / 卸载)只在托盘:
   // 悬浮球是"随手点一下"的入口,配置项摊在这里既挤掉高频项,又容易被误触
   for (const banned of ['主窗置顶', '前台感知开关', '开机启动', '打开数据目录', '卸载 DeepSeek…']) {
@@ -596,13 +637,34 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
     (g.blocks || []).forEach((b) => {
       if (b.kind === 'submenu') ballSubs.push(b);
     }));
-  if (ballSubs.length !== 2) {
-    console.error(`FAIL: 悬浮球菜单应有两个可折叠组(显示模式 / 尺寸), 实得 ${ballSubs.length}`);
+  // 三组可折叠:显示模式 / 尺寸 / 播放动作(三级)
+  if (ballSubs.length !== 3) {
+    console.error(`FAIL: 悬浮球菜单应有三个可折叠组(显示模式 / 尺寸 / 播放动作), 实得 ${ballSubs.length}`);
     failed += 1;
   }
   if (ballSubs.some((b) => !b.caption || !(b.items || []).length)) {
     console.error('FAIL: 可折叠组缺少父行标题(caption)或子项');
     failed += 1;
+  }
+  // 播放动作为三级结构:父组下的每一项都是分类 submenu,且每个分类都有动作与 act id
+  const playBlock = ballSubs.find((b) => b.caption === '播放动作');
+  if (!playBlock) {
+    console.error('FAIL: 悬浮球菜单缺少「播放动作」折叠组');
+    failed += 1;
+  } else {
+    const cats = playBlock.items || [];
+    const badCat = cats.find(
+      (c) => c.kind !== 'submenu' || !(c.items || []).length || !(c.items || []).every((i) => /^pet-play:./.test(i.act || ''))
+    );
+    if (!cats.length || badCat) {
+      console.error('FAIL: 「播放动作」第三级应是分类 submenu,且每项都是 pet-play:<动作名>');
+      failed += 1;
+    }
+    const total = cats.reduce((n, c) => n + (c.items || []).length, 0);
+    if (total < 50) {
+      console.error(`FAIL: 「播放动作」动作总数过少(${total}),分类可能没取到`);
+      failed += 1;
+    }
   }
   // 球菜单最末一组只能是"退出"—— 卸载过滤掉后别把"退出"也带走
   const ballLast = (ballGroups[ballGroups.length - 1] || {}).blocks || [];
@@ -615,7 +677,12 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
     console.error(`FAIL: 悬浮球菜单分组应为 action,pet,end, 实得 ${ballGroups.map((g) => g.key).join(',')}`);
     failed += 1;
   }
-  const wantBallLabels = ['打开主窗口', '截图提问', '悬浮球', '鲸鱼娘', '关闭显示', '小', '中', '大', '退出'];
+  const wantBallLabels = [
+    '打开主窗口', '截图提问',
+    '显示模式', '桌宠大小', // 折叠父行(自绘菜单点展开才铺子项);文案强调只控制桌宠
+    '播放动作',         // 三级菜单的顶层入口(分类与动作都在其下)
+    '退出',
+  ];
   if (ballLabels.join(' / ') !== wantBallLabels.join(' / ')) {
     console.error('FAIL: 悬浮球菜单项序不符');
     console.error('  期望:', wantBallLabels.join(' / '));
@@ -633,7 +700,20 @@ if (!security.isPrivateHostname('192.168.1.1') || !security.isPrivateHostname('l
   const trayActs = [];
   const tplForActs = mkTray((act) => trayActs.push(act)).toTemplate(baseCtx);
   flat(tplForActs).forEach((i) => i.click && i.click({}));
-  const expectedActs = ballItems.map((i) => i.act);
+  // 悬浮球侧取"动作项"清单:普通 items 块 + 折叠组的子项,逐层递归覆盖三级菜单
+  const actItemsOf = (blocks) => {
+    const out = [];
+    (blocks || []).forEach((b) => {
+      (b.items || []).forEach((it) => {
+        if (it.kind === 'submenu') out.push(...actItemsOf([it]));
+        else if (it.act) out.push(it);
+      });
+    });
+    return out;
+  };
+  const ballActItems = [];
+  ballGroups.forEach((g) => ballActItems.push(...actItemsOf(g.blocks)));
+  const expectedActs = ballActItems.map((i) => i.act);
   const actualActs = trayActs.filter((a) => !trayOnlyActs.has(a));
   if (actualActs.join(',') !== expectedActs.join(',')) {
     console.error('FAIL: 托盘与悬浮球菜单的动作 id 不一致');

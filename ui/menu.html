@@ -85,7 +85,7 @@
   }
   /* 子项容器:默认收起(初始高度只算父行一行),展开时才铺开 */
   .sub { display: none; }
-  .subwrap.open .sub { display: block; }
+  .subwrap.open > .sub { display: block; }
   /* 展开后整体右缩进 + 左侧引导线:层级关系一眼可见(也避免触摸时误点到父行) */
   .sub {
     margin-left: 12px;
@@ -93,6 +93,32 @@
     border-left: 1px solid var(--sep-bg);
   }
   .sub .mi { padding-left: 10px; }
+  /* 三级:分类块是嵌套的 .subwrap,再缩进一级并换一种引导线颜色,层级更深一眼可辨 */
+  .sub .subwrap > .sub {
+    margin-left: 10px;
+    border-left-color: rgba(77, 107, 254, 0.45);
+  }
+  /* 动作列表可能很长(单类 27 个):限高可滚动,避免把菜单撑到屏幕外。
+     滚动条只在真的溢出时出现,且收窄以减少视觉噪音 */
+  .sub .subwrap > .sub {
+    max-height: 264px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+  }
+  .sub .subwrap > .sub::-webkit-scrollbar { width: 6px; }
+  .sub .subwrap > .sub::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+  }
+  .sub .subwrap > .sub::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+  @media (prefers-color-scheme: light) {
+    .sub .subwrap > .sub::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); }
+  }
+  /* 置灰的整块(如"关闭显示"时的播放动作):父行与所有子项都不可点 */
+  .subwrap.disabled > .mi.parent { color: var(--mi-off-fg); cursor: default; }
+  .subwrap.disabled > .mi.parent:hover { background: transparent; color: var(--mi-off-fg); }
+  .subwrap.disabled > .mi.parent .arrow { opacity: 0.3; }
   /* 分组小标题(自绘菜单没有原生子菜单,仍有 caption 的分组用它表意) */
   .cap { font-size: 11px; color: var(--cap-fg); padding: 7px 10px 3px; }
   .sep { height: 1px; margin: 5px 6px; background: var(--sep-bg); }

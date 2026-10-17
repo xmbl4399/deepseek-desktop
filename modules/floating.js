@@ -1,27 +1,49 @@
 // 悬浮球:常驻桌面的小球(单击弹浮窗/双击切主窗/右键菜单由 floating.js 触发)
-// 尺寸:托盘"尺寸"选项 小/中/大(默认中=46),不做分辨率自适应
+// 尺寸:托盘"尺寸"选项 小/中/大,按工作区宽度取比例(见 WIDGET_BALL_RATIOS)
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
 
-const BALL_SIZE = 48; // 中档(默认)
+const BALL_SIZE = 48; // 中档(默认,1920 基准;实际按分辨率换算)
 // 默认停靠高度:屏幕可见区域高度的 2/3 处(即"下三分之一"靠上边界),比原来的垂直居中更低,
 // 不再挡住主窗正文。改这一行即可调整:3 → 距顶 1/3(更靠上),4 → 距顶 3/4(更靠下)
 const BALL_Y_RATIO = 2 / 3;
 const FLOATING_PAGE = path.join(__dirname, '..', 'ui', 'floating.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 
-// 三档尺寸表(纯函数,便于测试):小/中/大(桌面小圆点,2-3% 屏宽)
-const WIDGET_BALL_SIZES = { small: 40, medium: 48, large: 56 };
-function widgetBallSize(level) {
-  return WIDGET_BALL_SIZES[level] || BALL_SIZE;
+// 三档尺寸:同样按工作区宽度取比例 —— 球比鲸鱼娘更需要这个,因为它是纯点击目标。
+// 固定 40/48/56 CSS 在 1080p 上相对偏大、在 4K 无缩放上又偏小,点击手感会漂。
+// 比例取 2.3%/2.7%/3.2%(1920 屏上约 44/52/61),并夹住最小点击目标。
+const WIDGET_BALL_RATIOS = { small: 0.023, medium: 0.027, large: 0.032 };
+const BALL_MIN = 32; // 鼠标场景最小可点尺寸(触摸建议 ≥44,但球是常驻目标,过大会挡视野)
+const BALL_MAX = 96;
+function widgetBallSize(level, availW) {
+  const ratio = WIDGET_BALL_RATIOS[level] || WIDGET_BALL_RATIOS.medium;
+  const base = typeof availW === 'number' && availW > 0 ? availW : 1920;
+  return Math.round(Math.max(BALL_MIN, Math.min(BALL_MAX, base * ratio)));
 }
+// 1920 基准下的三档像素值,仅供阅读/文档参考(运行时一律走 widgetBallSize(level, availW))。
+// 导出给 require-check 做"比例换算结果"的回归校验。
+const WIDGET_BALL_SIZES = {
+  small: widgetBallSize('small', 1920),
+  medium: widgetBallSize('medium', 1920),
+  large: widgetBallSize('large', 1920),
+};
 
 function create({ log, state, onWindowLoaded }) {
   let ballSize = BALL_SIZE; // 当前尺寸(创建窗口时按尺寸档位计算)
 
-  // 主进程在设置变化/启动时调用,同步当前尺寸档位
-  function setWidgetSize(level) {
-    ballSize = widgetBallSize(level);
+  function effectiveAvailW(availW) {
+    if (typeof availW === 'number' && availW > 0) return availW;
+    try {
+      const wa = screen.getPrimaryDisplay().workArea;
+      return wa && wa.width > 0 ? wa.width : 1920;
+    } catch (e) {
+      return 1920;
+    }
+  }
+  // 主进程在设置变化/启动时调用,同步当前尺寸档位(可传工作区宽,不传用主屏)
+  function setWidgetSize(level, availW) {
+    ballSize = widgetBallSize(level, effectiveAvailW(availW));
   }
 
   // 尺寸档位变化后原地缩放现有窗口(不销毁重建,避免旧窗口残影/引用竞态)
@@ -131,6 +153,7 @@ function create({ log, state, onWindowLoaded }) {
     applyWidgetSize,
     widgetBallSize,
     BALL_SIZE,
+    WIDGET_BALL_SIZES,
   };
 }
 

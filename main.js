@@ -26,7 +26,12 @@ const security = require('./modules/security').create({ log });
 const offline = require('./modules/offline').create({ log });
 // 菜单模型:托盘与悬浮球菜单共用同一份项序/分组(modules/menu-model.js),
 // 这里只提供"当前状态"作为渲染依据 —— 加项/调顺序改 menu-model.js 即可,两个入口同时生效
-const ballMenu = require('./modules/ball-menu').create({ log, state, getMenuContext: menuContext });
+const ballMenu = require('./modules/ball-menu').create({
+  log,
+  state,
+  getMenuContext: menuContext,
+  beforeMenu: refreshPetCatalog, // 弹菜单前先取一次动作目录(「播放动作」三级列表用)
+});
 // 每个 webview 的"手势起点选区快照"(webview-preload 在 pointerdown 时上报):
 // webContents.id → { text, at }。context-menu 阶段用它区分"选区是这次手势刚选中"还是"本来就选中"。
 const selectionSnapshots = new Map();
@@ -112,17 +117,29 @@ const LINK_GUARD_SCRIPT = `(() => {
   }, true);
 })();`;
 
-// 主窗尺寸按"尺寸档位"对应分辨率区间:小=720p、中=1080p/1440p、大=2160p+
-// (与悬浮球/鲸鱼娘的 小/中/大 档位联动,调整任一侧都同步)
-function mainSizeFor(tier, availW) {
-  if (tier === 'small') return { w: 800, h: 600 };
-  if (tier === 'large') return { w: 1280, h: 960 };
-  return availW <= 2400 ? { w: 960, h: 720 } : { w: 1120, h: 840 }; // medium:1080p / 1440p
+// 主窗默认尺寸:与"桌宠尺寸"档位无关,只按用户桌面分辨率自动换算。
+// (早先主窗尺寸跟着桌宠档位联动,导致想把鲸鱼娘调大一点、主窗口也跟着变大,
+//  两个诉求被打包在一起。现在各管各的:桌宠档位只管鲸鱼娘/悬浮球。)
+const MAIN_MIN_W = 480;
+const MAIN_MIN_H = 360;
+function mainSizeFor(availW, availH) {
+  // 以工作区宽高各自的 48%/62% 取基准,这样宽屏/竖屏都能留出桌面空间,
+  // 再用最小/最大尺寸夹住,避免 4K 上开满屏、720p 上小到不能看。
+  const w = Math.round(Math.max(MAIN_MIN_W, Math.min(1440, availW * 0.48)));
+  const h = Math.round(Math.max(MAIN_MIN_H, Math.min(1000, availH * 0.62)));
+  return { w, h };
+}
+
+// 当前主屏工作区:桌宠尺寸按比例换算、主窗尺寸按比例换算都从这里取,
+// 保证"换显示器/改分辨率后重新量一次"只有一处来源。
+function workAreaSize() {
+  const wa = screen.getPrimaryDisplay().workArea;
+  return { width: wa.width, height: wa.height };
 }
 
 function createMainWindow() {
   const wa = screen.getPrimaryDisplay().workArea;
-  const sz = mainSizeFor(mode.getWidgetSize(), wa.width);
+  const sz = mainSizeFor(wa.width, wa.height);
   const MAIN_W = sz.w;
   const MAIN_H = sz.h;
   state.mainWindow = new BrowserWindow({
@@ -131,8 +148,8 @@ function createMainWindow() {
     // 默认位:屏幕居中(水平+垂直)
     x: wa.x + Math.round(wa.width / 2) - Math.round(MAIN_W / 2),
     y: wa.y + Math.round(wa.height / 2) - Math.round(MAIN_H / 2),
-    minWidth: 480,
-    minHeight: 360,
+    minWidth: MAIN_MIN_W,
+    minHeight: MAIN_MIN_H,
     // 标题栏显示产品名(壳页面 ui/main.html 也带 <title>DeepSeek</title>,此处兜底首帧不闪旧名)
     title: 'DeepSeek',
     icon: path.join(__dirname, 'ui', 'logo.png'),
@@ -179,17 +196,6 @@ function createMainWindow() {
       }
     }
   });
-}
-
-// 尺寸档位变化 → 主窗口同步档位尺寸(仅 setBounds 缩放,保留标签页与位置;
-// 不销毁重建——销毁会丢失所有打开标签,视觉效果相同)
-function resizeMainWindow() {
-  if (!state.mainWindow || state.mainWindow.isDestroyed()) return;
-  const wa = screen.getPrimaryDisplay().workArea;
-  const sz = mainSizeFor(mode.getWidgetSize(), wa.width);
-  const b = state.mainWindow.getBounds();
-  state.mainWindow.setBounds({ x: b.x, y: b.y, width: sz.w, height: sz.h });
-  log('[main] resized to', sz.w + 'x' + sz.h);
 }
 
 // 主窗置顶状态广播给壳渲染层(置顶按钮高亮)
@@ -523,7 +529,34 @@ function menuContext() {
     foregroundAware: mode.getForegroundAware(),
     autoStart: isAutoStartOn(),
     version: app.getVersion(),
+    petCatalog: petCatalogCache, // 鲸鱼娘的动作目录(菜单「播放动作」三级列表的数据源)
   };
+}
+
+// 鲸鱼娘动作目录缓存。权威来源是 ui/pet.js(素材文件名与分类只在那里维护),
+// 这里只是把渲染层上报的副本存下来供菜单模型使用 —— 主进程不自己维护第二份动作表。
+// 每次「播放动作」菜单会被重新问一次(见 refreshPetCatalog),不会长期停在旧数据上。
+let petCatalogCache = null;
+
+function refreshPetCatalog() {
+  return new Promise((resolve) => {
+    const w = state.petWindow;
+    if (!w || w.isDestroyed()) {
+      petCatalogCache = null; // 窗口没开:菜单模型会退回置灰的兜底形态
+      resolve(null);
+      return;
+    }
+    w.webContents
+      .executeJavaScript('window.__dsPetCatalog ? window.__dsPetCatalog() : null', true)
+      .then((list) => {
+        petCatalogCache = Array.isArray(list) ? list : null;
+        resolve(petCatalogCache);
+      })
+      .catch((e) => {
+        log('[pet] 取动作目录失败:', e && e.message);
+        resolve(null); // 缓存保持原样(可能是上一次的可用值)
+      });
+  });
 }
 
 // 打开数据目录(日志所在处;打包版是 %APPDATA%\deepseek-desktop,开发版是项目根)
@@ -533,11 +566,32 @@ function openDataDir() {
   log('[ui] open data dir:', dir);
 }
 
+// 播放指定动作:主进程只做转发,不做动作名校验 —— 动作表只在 ui/pet.js 里维护,
+// 主进程抄一份必然两边漂移(素材增删时最容易漏改)。
+function playPetAction(animName) {
+  const w = state.petWindow;
+  if (w && !w.isDestroyed()) {
+    w.webContents.send('pet-play', { name: animName });
+    log('[pet-play] 播放:', animName);
+    return;
+  }
+  // 当前显示模式不是"鲸鱼娘"时没有可播的窗口:不静默失败,给一个能照着做的提示
+  log('[pet-play] 鲸鱼娘窗口未创建,忽略:', animName);
+  tray.notify('先显示鲸鱼娘', '右键托盘图标 → 桌宠显示 → 鲸鱼娘,再播放动作。');
+}
+
 // ---------------- UI 动作分发(悬浮球/浮框/托盘共用) ----------------
 function onUiAction(name, payload) {
   log('[ui:action]', name, payload);
   // 任何动作都先关掉自绘右键菜单(菜单项点击后菜单应消失)
   ballMenu.closeMenuWindow();
+  // 右键菜单「播放动作 → 分类 → 动作」:act id 形如 pet-play:<动作名>,动作名就编在 id 里。
+  // switch 只能做全等匹配,这种"带参数的动作名"必须在 switch 之前按前缀拦掉,
+  // 否则会一路落到 default 变成 unknown ui action(菜单点了没反应的直接原因)。
+  if (typeof name === 'string' && name.startsWith('pet-play:')) {
+    playPetAction(name.slice('pet-play:'.length));
+    return;
+  }
   switch (name) {
     case 'show-main':
     case 'main':
@@ -702,14 +756,20 @@ const actions = {
   getDisplayMode: () => mode.getDisplayMode(),
   setForegroundAware: (v) => {
     mode.setForegroundAware(v);
-    // 开关状态变化时同步全屏检测/前台感知的运行与停止
+    // 开关状态变化时按新状态重跑一次(只影响前台上下文动画,全屏隐藏照常运行)
     if (fgToggleHandler) fgToggleHandler();
   },
   getForegroundAware: () => mode.getForegroundAware(),
   setWidgetSize: (s) => {
+    // 只影响桌宠(鲸鱼娘/悬浮球):主窗口尺寸只按桌面分辨率决定,不再跟档位联动。
+    // 用户手动拖过主窗大小也保持不变 —— 调桌宠档位不该顺手改动主窗口。
     mode.setWidgetSize(s);
+    // 档位是比例,换算成像素要当前工作区宽度:每次切换都重新量一次,
+    // 这样中途改分辨率/换显示器也能自愈(不再依赖启动时那一次)。
+    const wa = workAreaSize();
+    pet.setWidgetSize(s, wa.width);
+    floating.setWidgetSize(s, wa.width);
     mode.rebuildActiveWindow(); // 重建当前桌宠窗口应用新尺寸
-    resizeMainWindow();         // 主窗口同步档位尺寸(仅缩放,保留标签页)
   },
   getWidgetSize: () => mode.getWidgetSize(),
   setMainOnTop: (v) => {
@@ -741,6 +801,7 @@ const tray = require('./modules/tray').create({
   state,
   onMenuAction: onUiAction,      // 托盘菜单项与悬浮球菜单走同一个动作入口
   getMenuContext: menuContext,
+  beforeMenu: refreshPetCatalog, // 弹菜单前先取一次动作目录(「播放动作」三级列表用)
 });
 shortcutsApi = require('./modules/shortcuts').create({ log, state, actions });
 
@@ -831,9 +892,11 @@ app.whenReady().then(() => {
   }
   migrateAutostart(); // 迁移历史遗留自启项(旧值名 -> AppUserModelId);无旧项时不做任何改动
   tray.createTray();
-  // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)
-  floating.setWidgetSize(mode.getWidgetSize());
-  pet.setWidgetSize(mode.getWidgetSize());
+  // 同步尺寸档位到显示模块(窗口创建时按档位取尺寸)。
+  // 档位是占工作区宽度的比例,这里必须传实际宽度,否则会退回 1920 基准。
+  const wa0 = workAreaSize();
+  floating.setWidgetSize(mode.getWidgetSize(), wa0.width);
+  pet.setWidgetSize(mode.getWidgetSize(), wa0.width);
   mode.createActiveWindow(); // 按持久化模式建窗(默认悬浮球)
   updater.setupAutoUpdater();
 
@@ -869,61 +932,107 @@ app.whenReady().then(() => {
   // 内嵌 PowerShell 脚本:打包后 asar 内的 .ps1 无法被 powershell -File 读取执行,必须内嵌
   // (与 check-fullscreen.ps1 保持同步,smoke-test 逐行比对)
   const FS_CHECK_SCRIPT = `
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-public class WAPI {
-    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
-    [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-    public struct RECT { public int Left, Top, Right, Bottom; }
-}
+  # 全屏检测脚本(独立测试/调试用)
+  # 注意:运行时实际执行的是 main.js 内嵌的 FS_CHECK_SCRIPT 副本(打包后 asar 内的 .ps1
+  # 无法被 powershell -File 读取执行)。改动此文件时请同步更新 main.js 中的内嵌脚本。
+  # 输出:FULLSCREEN / WINDOWED;DS_FG_MODE=1 时追加进程名(FULLSCREEN|chrome / WINDOWED|Code)
+  # 前台感知开关关闭时(DS_FG_MODE≠1)不读取任何前台信息(隐私门控)
+  #
+  # 判定要点(2026-10 加固,原判据"铺满屏幕且无标题栏"误判频发,实测抓到
+  # explorer/Progman 与 TextInputHost/Windows.UI.Core.CoreWindow 都是 2560x1440 无标题栏):
+  #   1. 铺满屏幕**且非最大化**,最大化窗口也铺满屏幕但不是全屏
+  #   2. 窗口类名不在**外壳黑名单**里(桌面/任务栏/输入法宿主/窗口框架代理)
+  #   3. 高度必须超过**工作区高度**:最大化窗口贴着工作区(扣掉任务栏),真全屏占满整屏
+  #      ——这条是无边框窗口(WS_POPUP)与最大化窗口的关键分水岭
+  Add-Type @'
+  using System;
+  using System.Runtime.InteropServices;
+  using System.Text;
+  public class WAPI {
+      [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+      [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+      [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+      [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+      [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+      [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hWnd);
+      [DllImport("user32.dll")] public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+      public struct RECT { public int Left, Top, Right, Bottom; }
+  }
 '@ | Out-Null
 
-if (-not ('WAPI' -as [type])) { Write-Output "WINDOWED"; exit 0 }
+  if (-not ('WAPI' -as [type])) { Write-Output "WINDOWED"; exit 0 }
 
-# 让本进程 DPI aware,使 GetWindowRect(物理像素)与 Screen.Bounds 单位一致,避免缩放后误判
-[WAPI]::SetProcessDPIAware() | Out-Null
+  # 让本进程 DPI aware,使 GetWindowRect(物理像素)与 Screen.Bounds 单位一致,避免缩放后误判
+  [WAPI]::SetProcessDPIAware() | Out-Null
 
-$fw = [WAPI]::GetForegroundWindow()
-$r = New-Object WAPI+RECT
-[WAPI]::GetWindowRect($fw, [ref]$r) | Out-Null
+  $fw = [WAPI]::GetForegroundWindow()
+  $r = New-Object WAPI+RECT
+  [WAPI]::GetWindowRect($fw, [ref]$r) | Out-Null
 
-Add-Type -AssemblyName System.Windows.Forms | Out-Null
+  Add-Type -AssemblyName System.Windows.Forms | Out-Null
 
-$tolerance = 8  # 容忍 8px 偏差(浏览器全屏视频可能有微小边框)
-$w = $r.Right - $r.Left
-$h = $r.Bottom - $r.Top
-$full = $false
-# 遍历所有显示器:前台窗口覆盖任一屏幕即判定铺满(支持副屏)
-foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
-    $b = $s.Bounds
-    if ($r.Left -le ($b.Left + $tolerance) -and $r.Top -le ($b.Top + $tolerance) -and
-        $r.Right -ge ($b.Right - $tolerance) -and $r.Bottom -ge ($b.Bottom - $tolerance)) {
-        $full = $true
-        break
-    }
-}
-# 排除"最大化/普通窗口":最大化窗口也铺满屏幕,但带标题栏(WS_CAPTION),不是全屏
-# 真全屏窗口(浏览器 F11/视频全屏/游戏)通常无标题栏;Chromium 全屏虽带 WS_MAXIMIZE,
-# 但无 WS_CAPTION,所以用标题栏判据(比 WS_MAXIMIZE 更准)
-$style = [WAPI]::GetWindowLong($fw, -16)
-$hasCaption = ($style -band 0x00C00000) -ne 0
-# 前台感知:仅 DS_FG_MODE=1 时读取前台进程名(隐私门控);默认只输出全屏标志
-$suffix = ""
-if ($env:DS_FG_MODE -eq "1") {
-    $fwPid = 0
-    [WAPI]::GetWindowThreadProcessId($fw, [ref]$fwPid) | Out-Null
-    try {
-        $proc = Get-Process -Id $fwPid -ErrorAction Stop
-        $suffix = "|" + $proc.ProcessName
-    } catch {
-        $suffix = "|unknown"
-    }
-}
-if ($full -and -not $hasCaption) { Write-Output ("FULLSCREEN" + $suffix) } else { Write-Output ("WINDOWED" + $suffix) }
+  $tolerance = 8  # 容忍 8px 偏差(浏览器全屏视频可能有微小边框)
+  $full = $false
+  $workH = 0
+  # 遍历所有显示器:前台窗口覆盖任一屏幕即判定铺满(支持副屏)
+  foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+      $b = $s.Bounds
+      if ($r.Left -le ($b.Left + $tolerance) -and $r.Top -le ($b.Top + $tolerance) -and
+          $r.Right -ge ($b.Right - $tolerance) -and $r.Bottom -ge ($b.Bottom - $tolerance)) {
+          $full = $true
+          $workH = $s.WorkingArea.Height
+          break
+      }
+  }
+  # 排除"最大化/普通窗口":最大化窗口也铺满屏幕,但带标题栏(WS_CAPTION),不是全屏
+  # 真全屏窗口(浏览器 F11/视频全屏/游戏)通常无标题栏;Chromium 全屏虽带 WS_MAXIMIZE,
+  # 但无 WS_CAPTION,所以用标题栏判据(比 WS_MAXIMIZE 更准)
+  $style = [WAPI]::GetWindowLong($fw, -16)
+  $hasCaption = ($style -band 0x00C00000) -ne 0
+  $isMax = [WAPI]::IsZoomed($fw)
+
+  # 外壳窗口黑名单:桌面/任务栏/输入法候选窗/窗口框架代理。它们本就铺满屏幕且无标题栏,
+  # 一旦成为前台就会被误判成全屏(实测 Progman 与 Windows.UI.Core.CoreWindow 均中招)。
+  # 类名是 Win32 窗口类(区分大小写,统一转小写比较)
+  $cls = New-Object System.Text.StringBuilder 256
+  [WAPI]::GetClassName($fw, $cls, 256) | Out-Null
+  $clsName = $cls.ToString()
+  $shellClasses = @(
+      'Progman', 'WorkerW', 'Shell_TrayWnd', 'Shell_SecondaryTrayWnd',
+      'Windows.UI.Core.CoreWindow', 'ApplicationFrameHost',
+      'MultitaskingViewFrame', 'ForegroundStaging', 'XamlExplorerHostIslandWindow',
+      'Windows.Internal.Shell.TabProxyWindow', 'TaskListThumbnailWnd'
+  )
+  $isShell = $false
+  foreach ($c in $shellClasses) { if ($clsName -ieq $c) { $isShell = $true; break } }
+
+  # 工作区分水岭:最大化窗口高度 == 工作区高度(任务栏被扣掉);真全屏 == 整屏高度 > 工作区。
+  # 只在任务栏确实占用空间时(整屏高出工作区)才启用该判据,任务栏隐藏/自动隐藏时不误杀。
+  $screenH = $r.Bottom - $r.Top
+  $beatsWorkArea = $false
+  if ($workH -gt 0) { $beatsWorkArea = ($screenH -gt ($workH + $tolerance)) }
+  # 任务栏被自动隐藏时整屏高度也可能等于工作区,此时退回"非最大化"判据
+  $notMaxed = -not $isMax
+
+  # 前台感知:仅 DS_FG_MODE=1 时读取前台进程名(隐私门控);默认只输出全屏标志
+  $suffix = ""
+  if ($env:DS_FG_MODE -eq "1") {
+      $fwPid = 0
+      [WAPI]::GetWindowThreadProcessId($fw, [ref]$fwPid) | Out-Null
+      try {
+          $proc = Get-Process -Id $fwPid -ErrorAction Stop
+          $suffix = "|" + $proc.ProcessName
+      } catch {
+          $suffix = "|unknown"
+      }
+  }
+  # 判定链:铺满 → 无标题栏 → 非外壳窗口 → (高度超过工作区 或 非最大化)
+  $isFullscreen = $false
+  if ($full -and -not $hasCaption -and -not $isShell) {
+      if ($beatsWorkArea) { $isFullscreen = $true }
+      elseif ($notMaxed) { $isFullscreen = $true }
+  }
+  if ($isFullscreen) { Write-Output ("FULLSCREEN" + $suffix) } else { Write-Output ("WINDOWED" + $suffix) }
 `;
   // 精简环境变量:环境块过大(>64KB)会导致 Add-Type 编译失败,检测永久失效(实测 368KB 环境必挂)
   const MINIMAL_ENV = {
@@ -935,6 +1044,10 @@ if ($full -and -not $hasCaption) { Write-Output ("FULLSCREEN" + $suffix) } else 
     USERPROFILE: process.env.USERPROFILE || '',
   };
   const FS_CHECK_INTERVAL = { fullscreen: 800, windowed: 3000 }; // 全屏时高频,平时低频
+  // 去抖/迟滞:进入全屏要连续 ENTER 次命中才隐藏(躲开切换动画、最大化→全屏的中间态),
+  // 退出全屏只要 1 次未命中就恢复(宁可早一点让桌宠回来,也别让它多藏一会儿)
+  const FS_ENTER_CONFIRM = 2;
+  let fsEnterStreak = 0; // 连续命中全屏的次数
 
   // 广播前台上下文类别(渲染层:空闲时按类别演动画;聊天状态优先于它)
   function broadcastContext(category) {
@@ -972,17 +1085,24 @@ if ($full -and -not $hasCaption) { Write-Output ("FULLSCREEN" + $suffix) } else 
             const out = String(stdout || '');
             const [flag, proc] = out.split('|');
             const isFs = flag === 'FULLSCREEN';
-            if (isFs && !wasFullscreen) {
+            // 去抖:命中要连续 FS_ENTER_CONFIRM 次才真正隐藏;未命中立刻清零并当次恢复。
+            // 这样浏览器的 F11 切换动画、最大化→全屏的中间态都不会把桌宠闪没。
+            if (isFs) fsEnterStreak++;
+            else fsEnterStreak = 0;
+            const confirmedFs = isFs && fsEnterStreak >= FS_ENTER_CONFIRM;
+            if (confirmedFs && !wasFullscreen) {
               mode.hideForFs(); // 隐藏当前显示模式窗口(悬浮球或鲸鱼娘)
+              wasFullscreen = true;
             } else if (!isFs && wasFullscreen) {
               mode.restoreFromFs();
+              wasFullscreen = false;
             }
-            wasFullscreen = isFs;
             // 前台上下文:仅感知开启(脚本才返回进程名)且非全屏(桌宠已隐藏)时广播
             if (!isFs && proc && proc !== 'unknown') {
               const category = focus.classify(proc);
               if (category !== lastContext) broadcastContext(category);
             }
+            // 已确认全屏但还在攒次数期间,也按高频轮询,尽快凑够确认
             scheduleFsCheck(isFs ? FS_CHECK_INTERVAL.fullscreen : FS_CHECK_INTERVAL.windowed);
           }
         } catch (e) {
@@ -992,18 +1112,25 @@ if ($full -and -not $hasCaption) { Write-Output ("FULLSCREEN" + $suffix) } else 
     );
   }
 
-  // 前台感知开关联动:开=启动前台轮询;关=停止轮询、恢复可能被全屏隐藏的窗口
+  // 前台感知开关联动:只影响"前台上下文动画"(是否采集前台进程名),**不影响全屏隐藏**。
+  // 两件事原本共用一个开关,关掉感知就等于连全屏隐藏一起关掉 —— 那是把隐私开关和
+  // 体验开关错误耦合。现在:轮询照常跑(全屏检测要继续工作),仅 DS_FG_MODE 位随之变化,
+  // 读不读前台进程名由脚本那一侧决定(隐私门控仍在脚本里,关闭时确实不读任何前台信息)。
   fgToggleHandler = () => {
-    if (mode.getForegroundAware()) {
-      if (!fsCheckTimer) scheduleFsCheck(500);
-    } else {
-      if (fsCheckTimer) { clearTimeout(fsCheckTimer); fsCheckTimer = null; }
-      if (wasFullscreen) { wasFullscreen = false; mode.restoreFromFs(); }
+    // 关闭感知:清掉已广播的上下文,让桌宠回到纯随机动作链(不停轮询,全屏检测仍需运行)
+    if (!mode.getForegroundAware()) {
       lastContext = null;
+      for (const w of [state.petWindow, state.floatingWindow]) {
+        if (w && !w.isDestroyed()) {
+          try { w.webContents.send('pet-context', { category: '' }); } catch (e) { /* ignore */ }
+        }
+      }
     }
+    if (!fsCheckTimer) scheduleFsCheck(300); // 开关状态立即生效,不必等下一轮
   };
 
-  if (mode.getForegroundAware()) scheduleFsCheck(2000); // 启动 2 秒后首查(开关关闭则完全不读前台)
+  // 启动即开始轮询:全屏隐藏是独立功能,不依赖前台感知开关(隐私门控在脚本内按 DS_FG_MODE 走)
+  scheduleFsCheck(2000); // 启动 2 秒后首查
 });
 
 // 托盘驻留:所有窗口关闭时不退出,由托盘"退出"显式结束

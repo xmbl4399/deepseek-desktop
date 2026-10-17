@@ -64,25 +64,31 @@
       border-top-color: var(--bubble-bg);
       border-bottom: none;
     }
-    /* 背景光环(提升可视度):柔光径向渐变 ≈ 高斯模糊光晕,主题自适应;
-       位置/尺寸由 JS 按人物 HIT 区设置(applySize) */
+    /* 轮廓投影(从背景中分离人物):用 drop-shadow 而不是径向渐变圆环。
+       drop-shadow 按视频的 alpha 通道取剪影 —— 人物实体区域完全不受影响,
+       只在她外侧生成一圈柔和阴影,天然贴轮廓、无硬切边,也不存在"最浓的地方
+       正好糊在脸上"的问题(旧的 #halo 径向渐变就是这样,且直径 2.4x 人物宽会
+       溢出窗口被 overflow:hidden 切出上下两条直线)。
+       两段阴影:近处小半径压出清晰边,远处大半径铺开柔和过渡。
+       颜色用纯黑低透明度,深浅背景都成立(不跟系统主题走:主题是窗口配色,
+       屏幕背景是另一回事,跟错了反而帮倒忙)。 */
     :root {
-      --halo-color: rgba(46, 58, 110, 0.5);
       --shadow-color: rgba(0, 0, 0, 0.35);
+      /* 轮廓投影半径,480x270 基准值;applySize 按窗口尺寸重算 */
+      --rim-near: 9px;
+      --rim-far: 27px;
+      --rim-shadow-near: rgba(0, 0, 0, 0.34);
+      --rim-shadow-far: rgba(0, 0, 0, 0.22);
     }
     @media (prefers-color-scheme: light) {
       :root {
-        --halo-color: rgba(255, 255, 255, 0.55);
         --shadow-color: rgba(0, 0, 0, 0.18);
       }
     }
-    #halo {
-      position: absolute;
-      border-radius: 50%;
-      pointer-events: none;
-      z-index: 0;
-      background: radial-gradient(circle, var(--halo-color) 0%, transparent 70%);
-      transform: translate(-50%, -50%);
+    video.pv {
+      filter:
+        drop-shadow(0 0 var(--rim-near) var(--rim-shadow-near))
+        drop-shadow(0 0 var(--rim-far) var(--rim-shadow-far));
     }
     /* 脚下阴影(落地感) */
     #shadow {
@@ -99,7 +105,6 @@
 </head>
 <body>
   <div id="stage">
-    <div id="halo"></div>
     <div id="shadow"></div>
     <video id="va" class="pv is-front" muted playsinline autoplay title="鲸鱼娘"></video>
     <video id="vb" class="pv" muted playsinline autoplay title="鲸鱼娘"></video>

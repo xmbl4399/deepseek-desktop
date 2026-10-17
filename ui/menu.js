@@ -46,7 +46,8 @@ function buildItem(it) {
   return node;
 }
 
-// 折叠组:一行父项 + 其下的子项容器(默认收起)
+// 折叠组:一行父项 + 其下的子项容器(默认收起)。子项可以是普通项,也可以是
+// **嵌套的折叠块**(三级菜单:播放动作 → 分类 → 动作),所以这里递归。
 function buildSubmenu(block) {
   const wrap = el('div', 'subwrap');
   const parent = el('div', 'mi parent');
@@ -56,21 +57,37 @@ function buildSubmenu(block) {
   text.textContent = block.caption || block.label; // 球菜单用短标题(caption),父行不宜太长
   parent.appendChild(text);
   parent.appendChild(el('span', 'arrow'));
+  if (block.enabled === false) {
+    // 整块置灰(例如"关闭显示"时没有窗口可播动作):父行不可点,子项也全部不可点
+    parent.classList.add('disabled');
+    wrap.classList.add('disabled');
+  } else {
+    parent.addEventListener('click', () => toggleSub(wrap));
+    entries.push(parent); // 父行也是可交互项(键盘 Enter 展开)
+  }
   wrap.appendChild(parent);
 
   const sub = el('div', 'sub');
-  for (const it of block.items || []) sub.appendChild(buildItem(it));
+  for (const it of block.items || []) {
+    // 第三级:分类块本身也是 submenu → 递归展开,动作平铺在它下面
+    sub.appendChild(it.kind === 'submenu' ? buildSubmenu(it) : buildItem(it));
+  }
   wrap.appendChild(sub);
-
-  parent.addEventListener('click', () => toggleSub(wrap));
-  entries.push(parent); // 父行也是可交互项(键盘 Enter 展开)
   return wrap;
 }
 
-// 单开:展开一组时自动收起其它组,菜单不会越摊越长
+// 单开:同一层级内展开一组时自动收起其它组,菜单不会越摊越长。
+// 三级菜单下"同层级"是关键 —— 展开某个分类时不能把"播放动作"这个父组一起收起,
+// 否则动作列表刚展开就跟着父行消失。所以只收起**同一个父容器下的兄弟**。
 function toggleSub(wrap) {
   const willOpen = !wrap.classList.contains('open');
-  document.querySelectorAll('.subwrap.open').forEach((w) => w.classList.remove('open'));
+  const siblings = [];
+  if (wrap.parentNode) {
+    for (const n of wrap.parentNode.children) {
+      if (n !== wrap && n.classList && n.classList.contains('subwrap')) siblings.push(n);
+    }
+  }
+  siblings.forEach((w) => w.classList.remove('open'));
   if (willOpen) wrap.classList.add('open');
   // 收起后高亮若留在被藏起来的子项上,键盘会"看不见地在操作" → 交还给父行
   if (!willOpen && activeNode && wrap.contains(activeNode) && activeNode !== wrap.firstChild) {
@@ -152,11 +169,13 @@ document.addEventListener('keydown', (e) => {
   switch (e.key) {
     case 'Escape': {
       e.preventDefault();
-      // 有展开的折叠组时,Esc 先收起(与原生子菜单一致),再按一次才关菜单
-      const open = root.querySelector('.subwrap.open');
-      if (open) {
-        open.classList.remove('open');
-        setActive(open.firstChild);
+      // 有展开的折叠组时,Esc 先收起(与原生子菜单一致),再按一次才关菜单。
+      // 三级菜单下收最内层:取"最深的那个展开组"——先收动作列表,再收分类,最后收起父组。
+      const opened = root.querySelectorAll('.subwrap.open');
+      if (opened.length) {
+        const deepest = opened[opened.length - 1]; // querySelectorAll 是文档序,最后一个最深
+        deepest.classList.remove('open');
+        setActive(deepest.firstChild);
         reportSize();
         break;
       }
@@ -171,6 +190,37 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       move(-1);
       break;
+    case 'ArrowRight': {
+      // 三级菜单的键盘展开:当前高亮在父行时 → 展开;已在展开的父行上 → 进入第一个子项
+      e.preventDefault();
+      if (activeNode && activeNode.dataset.role === 'parent') {
+        const wrap = activeNode.parentNode;
+        if (!wrap.classList.contains('open')) toggleSub(wrap);
+        else {
+          const first = [...wrap.children].find((n) => n.classList.contains('sub'));
+          const children = first ? [...first.children] : [];
+          if (children.length) setActive(children[0]);
+        }
+      }
+      break;
+    }
+    case 'ArrowLeft': {
+      // 收起当前分组,或从子项退回到父行
+      e.preventDefault();
+      if (!activeNode) break;
+      const wrap = activeNode.closest('.subwrap');
+      if (!wrap) break;
+      if (activeNode !== wrap.firstChild) {
+        setActive(wrap.firstChild); // 子项 → 退到父行
+      } else if (wrap.classList.contains('open')) {
+        toggleSub(wrap); // 父行 → 收起本组
+      } else {
+        // 已收起 → 跳到外层的父行
+        const outer = wrap.parentNode && wrap.parentNode.closest ? wrap.parentNode.closest('.subwrap') : null;
+        if (outer) setActive(outer.firstChild);
+      }
+      break;
+    }
     case 'Home':
       e.preventDefault();
       setActive(visibleEntries()[0] || null);

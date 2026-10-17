@@ -8,7 +8,7 @@ const menuModel = require('./menu-model');
 
 const LOGO = path.join(__dirname, '..', 'ui', 'logo.png');
 
-function create({ log, state, onMenuAction, getMenuContext }) {
+function create({ log, state, onMenuAction, getMenuContext, beforeMenu }) {
   // 模型项 → 原生菜单项。radio/checkbox 要带 type,其余是普通项。
   function toItem(it) {
     const mi = { label: it.label, enabled: it.enabled !== false };
@@ -23,14 +23,26 @@ function create({ log, state, onMenuAction, getMenuContext }) {
     return mi;
   }
 
-  // 模型 → 原生模板:group 之间出分隔线;submenu 块出原生子菜单,items 块直接铺开
+  // 模型 → 原生模板:group 之间出分隔线;submenu 块出原生子菜单,items 块直接铺开。
+  // 嵌套 submenu(播放动作 → 分类 → 动作)必须递归转成二级原生子菜单 —— 否则分类块
+  // 会被当成普通项,渲染成一行点不动的"分类名",三级菜单在托盘里就断了。
+  function toEntry(block) {
+    if (block.kind === menuModel.SUBMENU) {
+      const out = { label: block.label };
+      if (block.enabled === false) out.enabled = false;
+      out.submenu = (block.items || []).map(toEntry);
+      return out;
+    }
+    return toItem(block);
+  }
+
   function toTemplate(ctx) {
     const out = [];
     menuModel.build(ctx).forEach((group, gi) => {
       if (gi > 0) out.push({ type: 'separator' });
       for (const block of group.blocks || []) {
         if (block.kind === menuModel.SUBMENU) {
-          out.push({ label: block.label, submenu: (block.items || []).map(toItem) });
+          out.push(toEntry(block));
         } else {
           for (const it of block.items || []) out.push(toItem(it));
         }
@@ -57,8 +69,13 @@ function create({ log, state, onMenuAction, getMenuContext }) {
     state.tray.setToolTip('DeepSeek');
 
     state.tray.setContextMenu(buildAppMenu());
-    // 每次弹出菜单前重建:保证"开机启动"勾选状态与注册表实际一致(只构建一次会显示过期状态)
-    state.tray.on('right-click', () => state.tray.setContextMenu(buildAppMenu()));
+    // 每次弹出菜单前重建:保证"开机启动"勾选状态与注册表实际一致(只构建一次会显示过期状态)。
+    // 同时先刷新动作目录:菜单项按「播放动作 → 分类 → 动作」分三级,分类数据要现取。
+    state.tray.on('right-click', () => {
+      const done = () => state.tray && !state.tray.isDestroyed() && state.tray.setContextMenu(buildAppMenu());
+      if (beforeMenu) beforeMenu().then(done, done); // 取目录失败也要照常弹菜单
+      else done();
+    });
     // 左键单击/双击:直接唤出主窗(原有行为,不改)。"隐藏"只在菜单首项里提供
     state.tray.on('click', () => onMenuAction('show-main'));
     state.tray.on('double-click', () => onMenuAction('show-main'));

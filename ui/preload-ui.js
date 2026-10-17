@@ -8,7 +8,7 @@ contextBridge.exposeInMainWorld('ds', {
   resize: (w, h) => ipcRenderer.send('ui:resize', w, h),
   // 调试日志:转发到主进程写入 ds-debug.log
   log: (...args) => ipcRenderer.send('ui:log', ...args),
-  // 订阅主进程广播(前台上下文 / 标签快捷键等)
+  // 订阅主进程广播(前台上下文 / 标签快捷键 / 菜单播放的动作等)
   on: (channel, cb) => {
     ipcRenderer.on(channel, (_e, ...args) => cb(...args));
   },

@@ -311,7 +311,7 @@ test('托盘菜单来自共用模型(项序/分组单一来源),弹出前重建�
     assert.ok(model.includes(key), `菜单模型缺少分组 ${key}`);
   }
   assert.ok(model.includes('trayOnly'), '模型缺少 trayOnly(托盘专属项过滤)');
-  assert.ok(model.includes("caption: '尺寸'"), '球菜单缺少尺寸分组的标题');
+  assert.ok(model.includes("caption: '桌宠大小'"), '球菜单缺少桌宠尺寸分组的标题');
   // 开关必须 checkbox(radio 单选语义关不掉);尺寸/模式 radio
   assert.ok(model.includes("type: 'checkbox'"), '开关项应使用 checkbox');
   assert.ok(model.includes("type: 'radio'"), '模式/尺寸应使用 radio');
@@ -357,6 +357,17 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   const mode = read('modules/mode.js');
   const pet = read('modules/pet.js');
   const main = read('main.js');
+  const menuModel = require('../modules/menu-model');
+  // 菜单模型里的分类副本 vs 渲染层真实分类:两边必须逐个动作一致(不能靠注释约定)。
+  // 渲染层是 DOM 脚本不能 require,这里用正则把 ACT_CATEGORIES 字面量抽出来求值。
+  const petCatalogFromUi = (() => {
+    const src = read('ui/pet.js');
+    const start = src.indexOf('const ACT_CATEGORIES = [');
+    const end = src.indexOf('\n];', start);
+    assert.ok(start > 0 && end > start, 'ui/pet.js 里找不到 ACT_CATEGORIES 字面量');
+    const literal = src.slice(start + 'const ACT_CATEGORIES = '.length, end + 2);
+    return eval(literal).map((c) => ({ id: c.id, actions: c.actions }));
+  })();
   // mode 模块:状态记忆 + 切换 + 全屏联动 + 活动窗口 + 三态(含"关闭显示"off)
   assert.ok(mode.includes('ds-settings.json'), '显示模式应持久化到 userData/ds-settings.json');
   assert.ok(mode.includes('loadMode') && mode.includes('saveMode'), '缺少模式读写');
@@ -408,8 +419,13 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   // 开机启动默认开:首次启动自动设置 + 初始化标记
   assert.ok(mode.includes('isAutoStartInit') && mode.includes('markAutoStartInit'), 'mode 缺少开机启动初始化标记');
   assert.ok(main.includes('setLoginItemSettings'), 'main 缺少开机启动设置');
-  // 尺寸联动:悬浮球/鲸鱼娘档位 → 主窗同步缩放(保留标签页)
-  assert.ok(main.includes('resizeMainWindow'), 'main 缺少主窗尺寸联动(换档时缩放主窗)');
+  // 尺寸解耦:桌宠档位（小/中/大）只影响鲸鱼娘与悬浮球,不再联动主窗口。
+  // 主窗尺寸只按桌面分辨率换算 → setWidgetSize 里不能出现 resizeMainWindow。
+  assert.ok(!main.includes('resizeMainWindow'), '桌宠尺寸档位不应再联动主窗(已解耦,档位只管鲸鱼娘/悬浮球)');
+  assert.ok(!/mainSizeFor\(\s*mode\.getWidgetSize/.test(main), 'mainSizeFor 不应再接收桌宠档位参数');
+  assert.ok(/function mainSizeFor\(availW, availH\)/.test(main), 'mainSizeFor 应只按桌面分辨率计算');
+  assert.ok(main.includes('MAIN_MIN_W') && main.includes('MAIN_MIN_H'), '主窗最小尺寸应改为具名常量(minWidth 与夹取共用)');
+  assert.ok(/setWidgetSize:[\s\S]{0,400}?rebuildActiveWindow/.test(main), 'setWidgetSize 仍应重建桌宠窗口');
   // 悬浮球渲染层:拖拽走 IPC,不再依赖渲染进程 moveTo
   const uiFloating = read('ui/floating.js');
   assert.ok(uiFloating.includes("'ball-move'"), '悬浮球拖拽应走 ball-move IPC');
@@ -428,9 +444,33 @@ test('显示模式(悬浮球/鲸鱼娘)装配完整', () => {
   assert.ok(/\.mi\s*\{[\s\S]*padding:\s*9px/.test(menuHtml), '自绘菜单行高应加大(触摸点选命中率)');
   // 可折叠子菜单:显示模式+尺寸合计 6 项,平铺会把高频项挤出屏幕 → 父行 + 就地展开
   assert.ok(menuJs.includes('buildSubmenu') && menuJs.includes('toggleSub'), '自绘菜单缺少可折叠子菜单');
-  assert.ok(menuHtml.includes('.subwrap.open .sub'), '子项应默认收起(展开才显示)');
+  // 三级菜单(播放动作 → 分类 → 动作)后选择器必须是直接子级:后代选择器会让展开
+  // 一个分类时把外层「播放动作」的子容器也一起铺开(所有分类全亮)
+  assert.ok(menuHtml.includes('.subwrap.open > .sub'), '子项应默认收起(展开才显示),且选择器须按直接子级写');
   assert.ok(menuJs.includes('api.resize'), '折叠组展开后应回报新尺寸(否则窗口高度不跟着变)');
   assert.ok(menuJs.includes('offsetParent'), '键盘导航应跳过收起中的子项');
+  // 三级嵌套:分类块递归建子菜单 + 同层单开(展开分类不能收起父组)+ 动作列表限高滚动
+  assert.ok(
+    menuJs.includes("it.kind === 'submenu' ? buildSubmenu(it) : buildItem(it)"),
+    '子项应支持嵌套子菜单(三级:分类 → 动作)'
+  );
+  // 折叠组单开只作用于同层兄弟:全局收起会把"播放动作"这个父组和刚展开的分类一起关掉
+  const toggleSubBody = menuJs.slice(menuJs.indexOf('function toggleSub'), menuJs.indexOf('function toggleSub') + 700);
+  assert.ok(
+    toggleSubBody.includes('wrap.parentNode.children') && !toggleSubBody.includes('document.querySelectorAll'),
+    '折叠组单开应只作用于同层兄弟(全局收起会把父组一起关掉)'
+  );
+  assert.ok(menuHtml.includes('max-height: 264px'), '动作列表应限高可滚动(单类 27 个会撑爆菜单)');
+  // 动作播放通道:菜单 act → 主进程 → 鲸鱼娘渲染层
+  assert.ok(main.includes("case 'pet-play:'") || main.includes("'pet-play:'"), '主进程缺少 pet-play 动作分发');
+  assert.ok(petUi.includes("api.on('pet-play'"), '鲸鱼娘渲染层缺少手动播放监听(pet-play)');
+  assert.ok(petUi.includes('__dsPetCatalog'), '鲸鱼娘渲染层缺少动作目录导出(菜单据此列分类)');
+  // 菜单模型的分类副本必须与渲染层逐个动作一致(两边不能漂移)
+  assert.deepStrictEqual(
+    menuModel.ACT_CATEGORIES.map((c) => ({ id: c.id, actions: c.actions })),
+    petCatalogFromUi,
+    '菜单模型里的动作分类与 ui/pet.js 不一致'
+  );
   // 模型 → 渲染层的下发链路
   assert.ok(read('modules/ball-menu.js').includes("'ball'"), '悬浮球菜单应按 ball 入口取模型(过滤托盘专属项)');
   // 尺寸重设必须绕开 ui:action —— onUiAction 会先关掉菜单窗口,展开折叠组不能触发那套语义
@@ -453,7 +493,6 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   const main = read('main.js');
   const focus = read('modules/focus.js');
   const petUi = read('ui/pet.js');
-  const floatingUi = read('ui/floating.js');
   // mode:前台感知开关设置(默认开,持久化)
   assert.ok(mode.includes('foregroundAware'), 'mode 应管理 foregroundAware 设置');
   assert.ok(mode.includes('getForegroundAware') && mode.includes('setForegroundAware'), '缺少前台感知读写');
@@ -466,7 +505,11 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   assert.ok(focus.includes('deepseek'), '前台分类应识别本应用(deepseek)');
   // 渲染层:鲸鱼娘订阅上下文(deepseek=工作动画)+ 移动动画原地播放;悬浮球订阅上下文徽标
   assert.ok(petUi.includes("'pet-context'"), '鲸鱼娘未订阅前台上下文');
-  assert.ok(petUi.includes('deepseek') && petUi.includes('setAnimLoop'), '鲸鱼娘缺少 deepseek 工作动画(循环)');
+  assert.ok(petUi.includes('deepseek'), '鲸鱼娘缺少 deepseek 场景');
+  assert.ok(!petUi.includes("setAnimLoop('鲸鱼吐泡泡特效')"), 'deepseek 不应再是常驻循环动画(一直吐泡泡很单调)');
+  assert.ok(petUi.includes('CONTEXT_RECHECK_MS'), '缺少同场景定时换动作(切窗口无事件时会卡在一件动作上)');
+  assert.ok(petUi.includes('periodPool'), '缺少时间/节令动作池(吃饭档与节令动作无处可放)');
+  assert.ok(petUi.includes('场景池引用了不存在的动作'), '缺少场景池动作名校验(写错名会静默黑屏)');
   assert.ok(petUi.includes('applyPerception'), '鲸鱼娘缺少状态感知落地');
   assert.ok(petUi.includes('原地奔跑'), '移动动画应原地播放(已禁用自动移动)');
   assert.ok(petUi.includes('showBubble') && petUi.includes('DRINK_MSGS'), '鲸鱼娘缺少趣味气泡');
@@ -490,8 +533,13 @@ test('前台感知:焦点在 DeepSeek 触发 + 程序分类 + 开关门控装配
   const pasteSeg = shellUi.split("'screenshot-paste'")[1].split("'screenshot-paste-loaded'")[0];
   assert.ok(pasteSeg && !pasteSeg.includes('createTab()'), '壳截图粘贴应作用于当前标签(不新建)');
   assert.ok(shellUi.includes('reportActiveTab'), '壳缺少活动标签上报');
-  assert.ok(floatingUi.includes("'pet-context'"), '悬浮球未订阅前台上下文');
-  assert.ok(floatingUi.includes('badge'), '悬浮球缺少状态徽标');
+  // 悬浮球不再订阅 pet-context / 不再有状态徽标:球体只有 48-67px,
+  // 右上角 10px 呼吸点在实际缩放下看不出动画,反而是常驻噪点。
+  // 反向断言防止有人"顺手加回来"。
+  const floatingUi = read('ui/floating.js');
+  assert.ok(!floatingUi.includes("'pet-context'"), '悬浮球不应再订阅前台上下文(状态徽标已移除)');
+  assert.ok(!read('ui/floating.html').includes('id="badge"'), '悬浮球不应再有 badge 元素');
+  assert.ok(!read('ui/ui.css').includes('#badge'), '悬浮球徽标样式应已清除');
 });
 
 test('v1.1.3 品牌统一:标题栏/托盘名/卸载文案 + Windows 应用标识', () => {

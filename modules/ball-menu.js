@@ -13,7 +13,7 @@ const MENU_PAGE = path.join(__dirname, '..', 'ui', 'menu.html');
 const UI_PRELOAD = path.join(__dirname, '..', 'ui', 'preload-ui.js');
 const GAP = 8; // 菜单与锚点(手指/光标位置)的间距
 
-function create({ log, state, getMenuContext }) {
+function create({ log, state, getMenuContext, beforeMenu }) {
   let anchor = { ax: 0, ay: 0 }; // 本次弹出时记录的锚点(客户区无关,屏幕坐标)
 
   function closeMenuWindow() {
@@ -76,12 +76,24 @@ function create({ log, state, getMenuContext }) {
     state.menuWindow.setAlwaysOnTop(true, 'pop-up-menu');
     state.menuWindow.loadFile(MENU_PAGE);
 
-    // 加载后把菜单模型交给渲染层,并取回实际内容尺寸自适应窗口
+    // 加载后把菜单模型交给渲染层,并取回实际内容尺寸自适应窗口。
+    // 下发改成异步:渲染前先取一次鲸鱼娘的动作目录(「播放动作」三级列表的数据源)。
+    // 目录取失败也照常渲染 —— 菜单模型有兜底分支,不能让菜单因为取目录失败而弹不出来。
     state.menuWindow.webContents.once('did-finish-load', () => {
-      const groups = menuModel.build(getMenuContext ? getMenuContext() : {}, 'ball');
-      state.menuWindow.webContents
-        .executeJavaScript('window.__dsMenuRender(' + JSON.stringify(groups) + ')', true)
-        .then(([mw, mh]) => {
+      const prep = beforeMenu ? beforeMenu() : Promise.resolve();
+      prep
+        .catch(() => {})
+        .then(() => {
+          if (!state.menuWindow || state.menuWindow.isDestroyed()) return null;
+          const groups = menuModel.build(getMenuContext ? getMenuContext() : {}, 'ball');
+          return state.menuWindow.webContents.executeJavaScript(
+            'window.__dsMenuRender(' + JSON.stringify(groups) + ')',
+            true
+          );
+        })
+        .then((res) => {
+          if (!res) return;
+          const [mw, mh] = res;
           if (!state.menuWindow || state.menuWindow.isDestroyed()) return;
           const at = fitMenu(mw, mh);
           state.menuWindow.focus();

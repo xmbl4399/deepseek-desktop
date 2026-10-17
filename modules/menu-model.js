@@ -18,6 +18,73 @@
 const SUBMENU = 'submenu';
 const ITEMS = 'items';
 
+// 动作分类(与 ui/pet.js 的 ACT_CATEGORIES 一一对应)。
+// 为什么在菜单模型里再抄一份分类名:菜单模型是纯函数、跑在主进程,不能 require
+// 渲染层脚本(ui/pet.js 依赖 DOM)。两边靠 smoke-test 校验一致性,不靠注释约定。
+// 动作名必须与 ui/pet.js 的 ACT_CATEGORIES 完全一致 —— 播放时按名字查素材文件。
+const ACT_CATEGORIES = [
+  {
+    id: '小动作',
+    actions: [
+      '悠闲哼歌', '超大伸懒腰', '原地敲击桌面互动', '原地重力下蹲压缩',
+      '哈欠连天', '原地小憩沉眠', '女仆屈膝礼仪', '被吓一跳',
+      '小幅度原地360度旋转展示', '偷吃零食被抓住', '用鲸鱼尾巴拍打地面',
+      '打瞌睡被惊醒', '照镜子', '整体换装试色', '轻快记录', '写代码',
+      '摇扇纳凉', '晨间刷牙',
+    ],
+  },
+  {
+    id: '玩耍',
+    actions: [
+      '原地专心玩魔方', '原地蹲下玩玩具汽车', '鲸鱼吐泡泡特效',
+      '原地跳跃抓碎头顶物品', '玩游戏气急败坏', '玩水枪', '小提琴演奏',
+      '蓝鲸现世', '优雅女仆舞', '轻快摇摆舞', '可爱宅舞', '吹气球',
+      '动物环绕', '放风筝', '拆礼物', '变鸽子', '扑克魔术', '抽陀螺',
+      '吹笛子', '蝴蝶蜜蜂环绕头顶开花', '撸猫', '凭空生花', '骑木马',
+      '三球抛接', '踢毽子', '下五子棋', '荡秋千',
+    ],
+  },
+  {
+    id: '吃什么',
+    actions: [
+      '吃白饭', '大口吃零食', '吃Token', '吃早餐', '吃午餐', '吃晚餐',
+      '吃冰淇淋融化', '吃大闸蟹', '吃糖葫芦', '吃长寿面', '吃西瓜', '涮火锅',
+    ],
+  },
+  {
+    id: '时节',
+    actions: [
+      '被落叶淹没', '中秋赏月吃月饼', '堆雪人', '放烟花', '吃粽子', '吃年糕',
+      '吃青团', '吃腊八粥', '吃重阳糕', '收红包', '写福字', '穿针乞巧',
+      '舞狮头', '讨糖南瓜灯', '插茱萸赏菊', '放河灯', '萌化小幽灵',
+      '装点圣诞树', '放孔明灯', '吃汤圆', '吃饺子',
+    ],
+  },
+  {
+    id: '文字',
+    actions: ['是啊，吃什么', '深度思考碎碎念'],
+  },
+];
+
+// 动作 → 菜单 act id。act 里带动作名,onUiAction 直接按这个 id 查表播放,
+// 不需要额外 payload(键盘 Enter 与鼠标点击走同一条路径)
+function actId(name) {
+  return 'pet-play:' + name;
+}
+
+// 动作目录:优先用渲染层实时上报的(鲸鱼娘窗口开着时),否则退回下面的兜底表。
+// ACT_CATEGORIES 是静态副本,唯一的用途是"鲸鱼娘窗口没开时"的兜底(关闭显示状态
+// 下整个「播放动作」组本来就置灰不可点),真正权威的来源是 ui/pet.js。
+function petCatalog(ctx) {
+  const live = ctx && Array.isArray(ctx.petCatalog) ? ctx.petCatalog : null;
+  if (live && live.length) {
+    return live
+      .filter((c) => c && typeof c.id === 'string' && Array.isArray(c.actions))
+      .map((c) => ({ id: c.id, actions: c.actions.filter((a) => typeof a === 'string' && a) }));
+  }
+  return ACT_CATEGORIES;
+}
+
 // ctx 由 main.js 的 menuContext() 提供:mainVisible / mode / size / mainOnTop /
 // foregroundAware / autoStart / version。缺字段时一律按"默认态"渲染,不会抛错。
 // entry 指定入口('tray' | 'ball'):trayOnly 项只在托盘出现 —— 过滤放在模型里而不是
@@ -66,12 +133,28 @@ function build(ctx, entry) {
         {
           kind: SUBMENU,
           label: '桌宠尺寸',
-          caption: '尺寸',
+          // 球菜单折叠父行文案:明确只控制鲸鱼娘/悬浮球,
+          // 否则用户会以为主窗口也跟着变(旧版确实是联动的,现在解耦了)
+          caption: '桌宠大小',
           items: [
             radio('size-small', '小', size === 'small', !off),
             radio('size-medium', '中', size === 'medium', !off),
             radio('size-large', '大', size === 'large', !off),
           ],
+        },
+        {
+          // 三级结构:父行「播放动作」→ 每个分类一项(同样是可展开的父行)→ 该类的动作列表。
+          // 分类块用 SUBMENU 嵌套,渲染层递归展开;80 个动作平铺会让菜单长到出屏幕。
+          kind: SUBMENU,
+          label: '播放动作',
+          caption: '播放动作',
+          enabled: !off, // 关闭显示时没有窗口可播,整组置灰
+          items: petCatalog(ctx).map((cat) => ({
+            kind: SUBMENU, // 嵌套子菜单:渲染层据此递归建第三级
+            label: cat.id,
+            caption: cat.id,
+            items: cat.actions.map((name) => ({ act: actId(name), label: name })),
+          })),
         },
       ],
     },
@@ -131,4 +214,6 @@ function build(ctx, entry) {
     .filter((g) => (g.blocks || []).length > 0);
 }
 
-module.exports = { build, SUBMENU, ITEMS };
+// ACT_CATEGORIES 一并导出:只为 smoke-test 做"与 ui/pet.js 逐项一致"的校验,
+// 生产代码取动作表请走 petCatalog(ctx)(优先用渲染层实时上报的权威目录)
+module.exports = { build, SUBMENU, ITEMS, ACT_CATEGORIES, actId };

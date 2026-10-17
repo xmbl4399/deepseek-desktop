@@ -52,14 +52,11 @@ ball.addEventListener('pointermove', (e) => {
 window.addEventListener('pointerup', () => { dragging = false; });
 window.addEventListener('pointercancel', () => { dragging = false; });
 
-// ---------- 状态徽标(前台上下文:焦点在 DeepSeek = 蓝点呼吸,其余无徽标) ----------
-const badge = document.getElementById('badge');
-api.on('pet-context', (c) => {
-  const category = c && typeof c.category === 'string' ? c.category : '';
-  badge.className = '';
-  if (category === 'deepseek') badge.classList.add('busy');
-  // 其他类别/other → 无徽标
-});
+// 注:这里原先还有一个"焦点在 DeepSeek 时右上角蓝点呼吸"的状态徽标,已移除。
+// 原因:球只有 48-67px,右上角 10px 的小点在 1.25x 缩放下几乎看不出呼吸,
+// 却会在球体边缘形成一个常驻的视觉噪点;而且它只表达"焦点在这款应用里",
+// 用户看一眼主窗口就知道,信息增益低于干扰成本。
+// pet-context 订阅一并删掉 —— 球不再需要任何状态反馈。
 
 // ---------- 球体事件 ----------
 // 交互与鲸鱼娘对齐:240ms 内的第二次点击 = 双击 → 开关主窗口;
