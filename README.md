@@ -53,17 +53,24 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 
 ## 截图
 
-> ⚠️ 仓库原有截图来自 v1.1.0 时期（界面已改版，且当时还没有多标签栏），已删除以免误导。
-> 以下位置待补拍 v1.1.3 实际界面。
+> 以下为 v1.2.0 实际界面（Windows 11 · 125% 缩放）。
 
-<!-- 补图时放到 docs/screenshots/ 下，把下表对应行的「待补」换成 ![说明](docs/screenshots/xxx.png) -->
+### 主窗口：多标签并行
 
-| 计划文件 | 计划内容 | 状态 |
-|---|---|---|
-| `docs/screenshots/main-tabs.png` | 主窗口：46px 触摸标签栏、右上置顶按钮、多标签并行 | 待补 |
-| `docs/screenshots/ball-menu.png` | 悬浮球右键菜单：可折叠的「显示模式 / 尺寸」父行、打开·隐藏主窗口、截图提问 | 待补 |
-| `docs/screenshots/pet.png` | 鲸鱼女仆：动画 + 台词气泡，停靠在屏幕右侧 2/3 高度处 | 待补 |
-| `docs/screenshots/web-context-menu.png` | 网页内选中文字后的右键 / 长按菜单（复制、搜索） | 待补 |
+46px 触摸标签栏、右上置顶按钮、多标签同时对话、每个标签独立上下文。
+
+![主窗口](docs/screenshots/main-tabs.png)
+
+### 悬浮球右键菜单
+
+可折叠的「显示模式 / 桌宠大小 / 播放动作」父行，以及隐藏主窗口、截图提问、退出。
+
+![悬浮球右键菜单](docs/screenshots/ball-menu.png)
+
+<table><tr>
+<td width="50%"><img src="docs/screenshots/pet.png" alt="鲸鱼女仆"><br><sub>鲸鱼女仆：动画 + 台词气泡，停靠屏幕右侧 2/3 高度</sub></td>
+<td width="50%"><img src="docs/screenshots/web-context-menu.png" alt="网页右键菜单"><br><sub>网页内选中文字后的右键菜单：复制 / 用默认浏览器搜索</sub></td>
+</tr></table>
 
 ---
 
