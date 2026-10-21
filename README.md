@@ -1,21 +1,27 @@
-# DeepSeek Desktop
+# DeepSeek Maid · 鲸鱼女仆版
 
-![release](https://img.shields.io/github/v/release/xmbl4399/deepseek-desktop?label=release)
+![release](https://img.shields.io/github/v/release/xmbl4399/deepseek-maid?label=release)
 ![platform](https://img.shields.io/badge/platform-Windows%2010%2B-blue)
 ![electron](https://img.shields.io/badge/electron-43-9feaf9?logo=electron)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-[DeepSeek](https://chat.deepseek.com/) 的第三方 **Windows 桌面客户端**。在官方网页外套一层 Electron 壳，补上网页版没有、但桌面应用该有的东西：**多标签并行会话、托盘常驻、悬浮球/鲸鱼娘桌宠、框选截图直接提问**，以及对 **Windows 平板/触摸屏** 的适配。
+> 你的桌面女仆，随叫随到。
+
+[DeepSeek](https://chat.deepseek.com/) 的第三方 **Windows 桌面客户端**。在官方网页外套一层 Electron 壳，补上网页版没有、但桌面应用该有的东西：**多标签并行会话、托盘常驻、鲸鱼女仆桌宠、框选截图直接提问**，以及对 **Windows 平板/触摸屏** 的适配。
 
 > **非官方项目**：不提供账号、不代理接口、不收集数据，对话内容全部由官方网页直连产生 —— 详见 [数据与隐私](#数据与隐私)。
 
 ## 亮点
 
 - **多标签并行** —— 同时开多个会话，标签栏随手切换；关闭窗口只缩到托盘，不打断对话
-- **悬浮球 / 鲸鱼娘桌宠** —— 双击开关主窗；不占任务栏，全屏看视频、打游戏时自动避让
+- **鲸鱼女仆** —— 106 个动画素材：屈膝行礼、写代码、打瞌睡、气急败坏都在里面；双击开关主窗，不占任务栏，全屏看视频、打游戏时自动避让
 - **框选截图提问** —— 圈一块屏幕，自动打开主窗并粘贴进输入框，省掉「保存 → 上传」两步
 - **触摸可用** —— 46px 标签栏、36×36 按钮、选中文字「两段式长按」才弹菜单，平板/二合一设备点得中
 - **自动更新** —— 后台静默下载，托盘/菜单一键重启安装
+
+### 为什么叫「女仆」
+
+桌宠是养着玩的，女仆是替你干活的。这软件的形态就是后者：常驻托盘、敲一下就出来、圈一块屏幕就能问、多个会话并行不打断你手头的事。而且动画里确实有「女仆屈膝礼仪」和「优雅女仆舞」这两个动作 —— 名字没有夸张。
 
 ---
 
@@ -23,13 +29,15 @@
 
 ### 下载安装包
 
-前往 [Releases](https://github.com/xmbl4399/deepseek-desktop/releases) 下载最新的 `DeepSeek-Desktop-Setup-<版本>.exe`，一路下一步即可（可勾选桌面快捷方式）。
+前往 [Releases](https://github.com/xmbl4399/deepseek-maid/releases) 下载最新的 `DeepSeek-Desktop-Setup-<版本>.exe`，一路下一步即可（可勾选桌面快捷方式）。
+
+> 安装包文件名仍是 `DeepSeek-Desktop-Setup`，原因见 [常见问题](#常见问题)。
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/xmbl4399/deepseek-desktop.git
-cd deepseek-desktop
+git clone https://github.com/xmbl4399/deepseek-maid.git
+cd deepseek-maid
 npm install
 npm start        # 开发模式运行
 npm test         # 冒烟测试（结构断言 + 模块装配校验）
@@ -51,10 +59,10 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 <!-- 补图时放到 docs/screenshots/ 下，把下表对应行的「待补」换成 ![说明](docs/screenshots/xxx.png) -->
 
 | 计划文件 | 计划内容 | 状态 |
-|---|---|:---:|
+|---|---|---|
 | `docs/screenshots/main-tabs.png` | 主窗口：46px 触摸标签栏、右上置顶按钮、多标签并行 | 待补 |
 | `docs/screenshots/ball-menu.png` | 悬浮球右键菜单：可折叠的「显示模式 / 尺寸」父行、打开·隐藏主窗口、截图提问 | 待补 |
-| `docs/screenshots/pet.png` | 鲸鱼娘桌宠：动画 + 台词气泡，停靠在屏幕右侧 2/3 高度处 | 待补 |
+| `docs/screenshots/pet.png` | 鲸鱼女仆：动画 + 台词气泡，停靠在屏幕右侧 2/3 高度处 | 待补 |
 | `docs/screenshots/web-context-menu.png` | 网页内选中文字后的右键 / 长按菜单（复制、搜索） | 待补 |
 
 ---
@@ -73,15 +81,15 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 - **网页内右键 / 长按菜单** —— 选中对话文字后右键（触摸端长按）即可复制、搜索；**两段式长按**：首次长按只框选文字，在已有选区上再次长按才弹菜单
 - **关闭 = 最小化到托盘** —— 点 × 不会退出程序，首次关闭会用气泡说明一次
 
-### 桌宠：悬浮球 / 鲸鱼娘（托盘「桌宠显示」切换，状态记忆）
+### 桌宠：悬浮球 / 鲸鱼女仆（托盘「桌宠显示」切换，状态记忆）
 
-- **默认悬浮球**（新用户）；可切换鲸鱼娘，或完全关闭显示
-- **鲸鱼娘** —— 53 个全量动画（待机 / 转向 / 动作 / 移动 / 点击回应），动画链概率驱动，单击随时回应、**双击开关主窗**
+- **默认悬浮球**（新用户）；可切换鲸鱼女仆，或完全关闭显示
+- **鲸鱼女仆** —— 106 个动画素材（待机 / 转向 / 动作 / 移动 / 点击回应），动画链概率驱动，单击随时回应、**双击开关主窗**
 - **悬浮球** —— **双击**开关主窗，**单击不响应**（避免误触）；可拖拽移动，松手钳制在屏幕内、允许半身悬出贴边
 - **入睡机制** —— 交互闲置 60 秒自动入睡（原地小憩），点击 / 拖拽 / 状态变化唤醒
-- **动作台词气泡** —— 每个动画配台词（写代码 = 「这个 bug 在哪…」、吃 Token = 「嗯，这 Token 好吃!」、拖拽 = 「喂喂，别拽我!」），随机变体，**10 秒冷却**防轰炸
+- **动作台词气泡** —— 每个动画配台词（写代码 = 「这个 bug 在哪…」、吃 Token = 「嗯，这 Token 好吃!」、拖拽 = 「喂喂，别拽我!」、行礼 = 「欢迎光临~」），随机变体，**10 秒冷却**防轰炸
 - **趣味提醒气泡** —— 启动问好 / 喝水（45 分钟）/ 久坐运动（30 分钟）/ 饭点前提醒（7:30·11:30·17:30）/ 夜间休息（23 点）/ 随机感叹
-- **尺寸三档** —— 小 / 中 / 大，桌宠与主窗口同步缩放（悬浮球 40/48/56px，鲸鱼娘 220×124 / 300×169 / 400×225）
+- **尺寸三档** —— 小 / 中 / 大，桌宠与主窗口同步缩放（悬浮球 40/48/56px，鲸鱼女仆 220×124 / 300×169 / 400×225）
 - **前台感知开关**（默认开）—— 全屏时自动隐藏（看视频、打游戏不遮挡）；并按前台程序类型适配动画（焦点在 DeepSeek 吐泡泡、IDE 里多演「写代码」、游戏里「气急败坏」…）。关闭后完全不读取前台窗口
 - **对话状态徽标** —— 焦点在 DeepSeek 时悬浮球显示蓝点呼吸
 
@@ -102,8 +110,8 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 | `Ctrl+F` | 页内查找（当前标签） |
 | `Ctrl+=` `Ctrl+-` `Ctrl+0` | 放大 / 缩小 / 重置缩放 |
 | `F12` | 开发者工具 |
-| 双击悬浮球 / 鲸鱼娘 | 打开或隐藏主窗 |
-| 单击鲸鱼娘 / 单击悬浮球 | 播放回应动画 / 不响应 |
+| 双击悬浮球 / 鲸鱼女仆 | 打开或隐藏主窗 |
+| 单击鲸鱼女仆 / 单击悬浮球 | 播放回应动画 / 不响应 |
 | 右键悬浮球、托盘、标签 | 弹出对应菜单 |
 
 ---
@@ -114,7 +122,10 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 是的，这是设计。点 × 等于最小化到托盘，保持会话不掉线；首次关闭会弹一次气泡说明。彻底退出：**右键托盘图标 → 退出**。
 
 **桌宠不见了？**
-右键托盘 →「桌宠显示」→ 选悬浮球或鲸鱼娘。若选了「关闭显示」桌宠窗口会全部销毁，同样从这里找回。
+右键托盘 →「桌宠显示」→ 选悬浮球或鲸鱼女仆。若选了「关闭显示」桌宠窗口会全部销毁，同样从这里找回。
+
+**安装包为什么还叫 `DeepSeek-Desktop-Setup-…exe`，数据目录也还是 `%APPDATA%\deepseek-desktop`？**
+改名只改仓库名和对外称呼。安装目录（`%LOCALAPPDATA%\Programs\deepseek-desktop`）、卸载器路径（`Uninstall\DeepSeek Desktop.exe`）、数据目录都由应用内部标识派生，一改老用户的登录态、窗口与桌宠设置就全部丢失，所以这几处刻意保持原样。
 
 **配置和日志存在哪？**
 `%APPDATA%\deepseek-desktop`（登录态、窗口与桌宠设置、日志 `ds-debug.log`）。托盘右键 →「打开数据目录」可直接打开；反馈问题时附上日志最快。
@@ -138,7 +149,7 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 
 ## 更新日志
 
-完整记录见 [Releases](https://github.com/xmbl4399/deepseek-desktop/releases)。
+完整记录见 [Releases](https://github.com/xmbl4399/deepseek-maid/releases)。
 
 ---
 
@@ -149,7 +160,7 @@ npm run build    # 打包 Windows 安装包，输出到 release/
 | 项目 | 借鉴内容 |
 |---|---|
 | [doxdk/deepseek-desktop](https://github.com/doxdk/deepseek-desktop) | Electron 壳基础（本项目 fork 自该仓库） |
-| [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) | 鲸鱼娘**动画素材**（53 个透明 webm，MIT 许可）+ **动画链模型**（双缓冲交叉淡入、概率链、命中区、拖拽手感） |
+| [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet) | 鲸鱼女仆**动画素材**（透明 webm，MIT 许可）+ **动画链模型**（双缓冲交叉淡入、概率链、命中区、拖拽手感） |
 | [QCYTSN/dsh-dafeiyu](https://github.com/QCYTSN/dsh-dafeiyu) | **气泡思路**（轻量文字气泡，问候 / 提醒 / 台词） |
 | [AnRkey/Grok-Desktop](https://github.com/AnRkey/Grok-Desktop) | **多标签页**、系统主题跟随、常置顶，以及模块化 / 快捷键 / 安全加固思路 |
 

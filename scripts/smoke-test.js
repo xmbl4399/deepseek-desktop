@@ -223,7 +223,7 @@ test('package.json 元数据', () => {
   const pkg = JSON.parse(read('package.json'));
   assert.strictEqual(pkg.name, 'deepseek-desktop');
   // repository 必须指向当前仓库,而非 fork 源
-  assert.match(pkg.repository.url, /xmbl4399\/deepseek-desktop/);
+  assert.match(pkg.repository.url, /xmbl4399\/deepseek-maid/);
   assert.strictEqual(pkg.author, 'xmbl4399');
   // 构建配置:icon 必须指向仓库内文件(可复现构建)
   assert.strictEqual(pkg.build.win.icon, 'build/icon.ico');

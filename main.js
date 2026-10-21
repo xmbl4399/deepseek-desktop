@@ -386,7 +386,7 @@ function showAbout() {
       detail: [
         '版本 ' + app.getVersion(),
         'Electron ' + process.versions.electron,
-        '仓库 https://github.com/xmbl4399/deepseek-desktop',
+        '仓库 https://github.com/xmbl4399/deepseek-maid',
       ].join('\n'),
       buttons: ['检查更新', '关闭'],
       defaultId: 1,
@@ -444,7 +444,7 @@ function setupAppMenu() {
       submenu: [
         { label: '关于 DeepSeek', click: showAbout },
         { label: '检查更新…', click: () => updater.checkForUpdates() },
-        { label: '项目主页', click: () => security.openExternalSafe('https://github.com/xmbl4399/deepseek-desktop') },
+        { label: '项目主页', click: () => security.openExternalSafe('https://github.com/xmbl4399/deepseek-maid') },
       ],
     },
   ];

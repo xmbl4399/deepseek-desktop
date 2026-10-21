@@ -19,12 +19,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/xmbl4399/deepseek-desktop"
+    "url": "https://github.com/xmbl4399/deepseek-maid"
   },
   "publish": {
     "provider": "github",
     "owner": "xmbl4399",
-    "repo": "deepseek-desktop",
+    "repo": "deepseek-maid",
     "releaseType": "release"
   },
   "build": {
