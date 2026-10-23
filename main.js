@@ -58,6 +58,9 @@ const floating = require('./modules/floating').create({ log, state, onWindowLoad
 const pet = require('./modules/pet').create({ log, state, onWindowLoaded: resendContextToWidgets });
 // 显示模式协调(悬浮球/鲸鱼娘),依赖 floating + pet,须在两者之后装配
 const mode = require('./modules/mode').create({ log, state, floating, pet });
+// 置顶守护:Windows 上浮窗偶尔会掉出"最上层带"(被最大化窗口盖住,但 WS_EX_TOPMOST 位还在),
+// 靠周期性重新断言 + 由隐转显立刻断言兜底,详见 modules/topmost.js
+const topmost = require('./modules/topmost').create({ log, state });
 // 前台程序分类(前台感知开关开启时:焦点在 DeepSeek 触发工作动画,其余按程序类型适配)
 const focus = require('./modules/focus');
 let shortcutsApi = null;
@@ -898,6 +901,7 @@ app.whenReady().then(() => {
   floating.setWidgetSize(mode.getWidgetSize(), wa0.width);
   pet.setWidgetSize(mode.getWidgetSize(), wa0.width);
   mode.createActiveWindow(); // 按持久化模式建窗(默认悬浮球)
+  topmost.start(); // 置顶守护(浮窗建好后开始周期性断言最上层)
   updater.setupAutoUpdater();
 
   ipcMain.on('ui:action', (_e, name, payload) => onUiAction(name, payload));

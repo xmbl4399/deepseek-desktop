@@ -73,6 +73,7 @@ const contextMenu = require(path.join(ROOT, 'modules', 'context-menu')).create({
 const floating = require(path.join(ROOT, 'modules', 'floating')).create({ log, state });
 const pet = require(path.join(ROOT, 'modules', 'pet')).create({ log, state });
 const mode = require(path.join(ROOT, 'modules', 'mode')).create({ log, state, floating, pet });
+const topmost = require(path.join(ROOT, 'modules', 'topmost')).create({ log, state });
 const focus = require(path.join(ROOT, 'modules', 'focus'));
 const screenshot = require(path.join(ROOT, 'modules', 'screenshot')).create({ log });
 const updater = require(path.join(ROOT, 'modules', 'updater')).create({ log });
@@ -125,6 +126,7 @@ const expectations = [
   ['tray', tray, ['createTray', 'buildAppMenu', 'refresh', 'notify', 'toTemplate']],
   ['shortcuts', shortcuts, ['register']],
   ['menu-model', menuModel, ['build']],
+  ['topmost', topmost, ['pin', 'pinWidgets', 'start', 'stop']],
 ];
 
 let failed = 0;

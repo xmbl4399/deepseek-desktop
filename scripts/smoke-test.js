@@ -55,6 +55,7 @@ const REQUIRED_FILES = [
   'modules/focus.js',
   'modules/context-menu.js',
   'modules/menu-model.js',
+  'modules/topmost.js',
 ];
 
 test('关键文件存在', () => {
@@ -213,6 +214,7 @@ test('JS 语法检查(node --check)', () => {
     'modules/focus.js',
     'modules/context-menu.js',
     'modules/menu-model.js',
+    'modules/topmost.js',
   ];
   for (const f of jsFiles) {
     execFileSync(NODE, ['--check', path.join(ROOT, f)], { stdio: 'pipe' });
